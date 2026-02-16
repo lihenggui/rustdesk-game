@@ -9,7 +9,7 @@ import me.blocker.gamedesk.RdClipboardManager
 
 object FFI {
     init {
-        System.loadLibrary("rustdesk")
+        System.loadLibrary("gamedesk")
     }
 
     external fun init(ctx: Context)
