@@ -1,4 +1,4 @@
-package com.carriez.flutter_hbb
+package me.blocker.gamedesk
 
 import android.annotation.SuppressLint
 import android.app.PendingIntent
@@ -26,7 +26,7 @@ import android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
 import android.widget.ImageView
 import android.widget.PopupMenu
 import com.caverock.androidsvg.SVG
-import com.gamingapp.remotegaming.R
+import me.blocker.gamedesk.R
 import ffi.FFI
 import kotlin.math.abs
 

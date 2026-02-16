@@ -1,4 +1,4 @@
-package com.carriez.flutter_hbb
+package me.blocker.gamedesk
 
 import ffi.FFI
 
@@ -37,7 +37,7 @@ import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import com.gamingapp.remotegaming.R
+import me.blocker.gamedesk.R
 import io.flutter.embedding.android.FlutterActivity
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
