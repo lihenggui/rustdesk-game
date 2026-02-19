@@ -219,6 +219,22 @@ class PlatformFFI {
     } catch (e) {
       debugPrintStack(label: 'initialize failed: $e');
     }
+    if (kBuildRendezvousServer.isNotEmpty) {
+      final current =
+          await _ffiBind.mainGetOption(key: 'custom-rendezvous-server');
+      if (current.isEmpty) {
+        await _ffiBind.mainSetOption(
+          key: 'custom-rendezvous-server',
+          value: kBuildRendezvousServer,
+        );
+      }
+    }
+    if (kBuildRsPubKey.isNotEmpty) {
+      final currentKey = await _ffiBind.mainGetOption(key: 'key');
+      if (currentKey.isEmpty) {
+        await _ffiBind.mainSetOption(key: 'key', value: kBuildRsPubKey);
+      }
+    }
     version = await getVersion();
   }
 
