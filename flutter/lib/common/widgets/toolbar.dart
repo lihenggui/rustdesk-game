@@ -155,6 +155,19 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
         child: Text(translate('Reset canvas')),
         onPressed: () => ffi.cursorModel.reset()));
   }
+  // virtual joystick (mobile touch screen only)
+  if (isDefaultConn && isMobile && !ffiModel.viewOnly && perms['keyboard'] != false) {
+    v.add(TTextMenu(
+      child: Obx(() {
+        final enabled = VirtualJoystickState.find(id).value;
+        return Text(translate(enabled ? 'Disable Virtual Joystick' : 'Virtual Joystick'));
+      }),
+      onPressed: () {
+        final state = VirtualJoystickState.find(id);
+        state.value = !state.value;
+      },
+    ));
+  }
 
   // https://github.com/rustdesk/rustdesk/pull/9731
   // Does not work for connection established by "accept".
