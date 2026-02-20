@@ -18,23 +18,26 @@ const double _kArrowOffset = 46.0;
 const double _kArrowHalfWidth = 8.0;
 const double _kArrowHeight = 11.0;
 
-/// Semi-transparent virtual joystick overlay for the bottom-left corner.
+/// Semi-transparent gamepad joystick overlay for the bottom-left corner.
 ///
 /// Captures all touch/pan events within its bounds (does NOT forward them to
 /// the remote desktop) and sends VK_UP / VK_DOWN / VK_LEFT / VK_RIGHT
 /// key-down / key-up events to the remote machine as the stick is moved.
-class VirtualJoystick extends StatefulWidget {
+///
+/// Named [GameJoystick] to avoid collision with the mouse-cursor
+/// [VirtualJoystick] widget in `floating_mouse_widgets.dart`.
+class GameJoystick extends StatefulWidget {
   final FFI ffi;
   final String id;
 
-  const VirtualJoystick({Key? key, required this.ffi, required this.id})
+  const GameJoystick({Key? key, required this.ffi, required this.id})
       : super(key: key);
 
   @override
-  State<VirtualJoystick> createState() => _VirtualJoystickState();
+  State<GameJoystick> createState() => _VirtualJoystickState();
 }
 
-class _VirtualJoystickState extends State<VirtualJoystick> {
+class _VirtualJoystickState extends State<GameJoystick> {
   // Current stick offset from the joystick centre (clamped to base radius)
   Offset _stick = Offset.zero;
 

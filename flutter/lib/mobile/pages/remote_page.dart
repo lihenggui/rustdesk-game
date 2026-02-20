@@ -470,7 +470,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                                     Positioned(
                                       left: 16,
                                       bottom: 16,
-                                      child: VirtualJoystick(
+                                      child: GameJoystick(
                                         ffi: gFFI,
                                         id: widget.id,
                                       ),
