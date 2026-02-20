@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common/shared_state.dart';
 import 'package:flutter_hbb/common/widgets/toolbar.dart';
 import 'package:flutter_hbb/consts.dart';
+import 'package:flutter_hbb/common/widgets/gamepad_buttons.dart';
+import 'package:flutter_hbb/common/widgets/virtual_joystick.dart';
 import 'package:flutter_hbb/mobile/widgets/floating_mouse.dart';
 import 'package:flutter_hbb/mobile/widgets/floating_mouse_widgets.dart';
 import 'package:flutter_hbb/mobile/widgets/gesture_help.dart';
@@ -450,12 +452,39 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                               }
                               return Container(
                                 color: MyTheme.canvasColor,
-                                child: inputModel.isPhysicalMouse.value
-                                    ? getBodyForMobile()
-                                    : RawTouchGestureDetectorRegion(
-                                        child: getBodyForMobile(),
+                                child: Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    inputModel.isPhysicalMouse.value
+                                        ? getBodyForMobile()
+                                        : RawTouchGestureDetectorRegion(
+                                            child: getBodyForMobile(),
+                                            ffi: gFFI,
+                                          ),
+                                    // Joystick (bottom-left) and gamepad
+                                    // buttons (bottom-right) sit ABOVE the
+                                    // gesture region as Stack siblings, so
+                                    // HitTestBehavior.opaque on each widget
+                                    // prevents their touch events from
+                                    // reaching the remote-desktop handler.
+                                    Positioned(
+                                      left: 16,
+                                      bottom: 16,
+                                      child: VirtualJoystick(
                                         ffi: gFFI,
+                                        id: widget.id,
                                       ),
+                                    ),
+                                    Positioned(
+                                      right: 16,
+                                      bottom: 16,
+                                      child: GamepadButtons(
+                                        ffi: gFFI,
+                                        id: widget.id,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               );
                             }),
                           ),
