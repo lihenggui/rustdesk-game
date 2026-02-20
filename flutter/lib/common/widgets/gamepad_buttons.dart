@@ -6,20 +6,23 @@ import 'package:get/get.dart';
 
 // ── Size / spacing constants ────────────────────────────────────────────────
 
-/// Large primary-action button diameter = 52 dp.
+/// Large primary-action button – max diameter 52 dp.
 const double _kLargeRadius = 26.0;
 
-/// Small shortcut button diameter = 36 dp.
+/// Small shortcut button – max diameter 36 dp.
 const double _kSmallRadius = 18.0;
 
 const double _kLargeGap = 8.0;
 const double _kSmallGap = 5.0;
-
-/// Vertical gap between the two rows.
 const double _kRowGap = 10.0;
-
-/// Alt-lock indicator button size (diameter).
 const double _kAltLockSize = 22.0;
+
+/// Portrait expand/collapse toggle diameter.
+const double _kToggleSize = 34.0;
+
+/// Left-side reserved width in portrait:
+/// joystick left-margin(16) + joystick width(144) + gap(16) = 176 dp.
+const double _kJoystickReserved = 176.0;
 
 // ── Button definitions ──────────────────────────────────────────────────────
 
@@ -37,7 +40,7 @@ const List<_Btn> _kLargeRow = [
   _Btn("'", "'"),
 ];
 
-/// Top row – nine shortcut keys (smaller, affected by Alt lock).
+/// Top row – nine shortcut keys (affected by Alt lock).
 const List<_Btn> _kSmallRow = [
   _Btn('A', 'a'),
   _Btn('S', 's'),
@@ -52,13 +55,12 @@ const List<_Btn> _kSmallRow = [
 
 // ── Public widget ────────────────────────────────────────────────────────────
 
-/// Gamepad-style button panel, placed in the bottom-right corner.
+/// Gamepad-style button panel for the bottom-right corner.
 ///
-/// Visibility is driven by [VirtualJoystickState] — the same menu toggle
-/// that controls the left-side joystick.
-///
-/// A small Alt-lock toggle sits at the top-right corner of the small-buttons
-/// row. When active, every small button sends Alt+[key] instead of [key].
+/// **Landscape**: always visible, full-size buttons.
+/// **Portrait**: collapsed by default (shows only a chevron toggle);
+///   tap to expand. When expanded, button sizes are calculated dynamically
+///   so the panel fits in the space to the right of the joystick.
 class GamepadButtons extends StatefulWidget {
   final FFI ffi;
   final String id;
@@ -71,8 +73,11 @@ class GamepadButtons extends StatefulWidget {
 }
 
 class _GamepadButtonsState extends State<GamepadButtons> {
-  /// Whether the Alt modifier is locked on for the small-button row.
   bool _altLock = false;
+
+  /// Portrait-only: whether the button panel is currently expanded.
+  /// Persists across gamepad-mode on/off toggles.
+  bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
@@ -81,31 +86,120 @@ class _GamepadButtonsState extends State<GamepadButtons> {
         return const SizedBox.shrink();
       }
 
+      final isPortrait =
+          MediaQuery.of(context).orientation == Orientation.portrait;
+
+      // ── Landscape: full panel, fixed sizes ──────────────────────────────
+      if (!isPortrait) {
+        return _buildPanel(
+          smallRadius: _kSmallRadius,
+          smallGap: _kSmallGap,
+          largeRadius: _kLargeRadius,
+          largeGap: _kLargeGap,
+        );
+      }
+
+      // ── Portrait: chevron toggle + conditionally expanded panel ─────────
+      //
+      // Available width = screenWidth minus the space the joystick occupies
+      // on the left (left:16 + width:144 + gap:16 = 176 dp).
+      final screenWidth = MediaQuery.of(context).size.width;
+      final available =
+          (screenWidth - _kJoystickReserved).clamp(100.0, double.infinity);
+
+      // Derive button radii so both rows fit exactly inside `available`.
+      const smallGap = 3.0;
+      const largeGap = 5.0;
+      final smallRadius =
+          ((available - (_kSmallRow.length - 1) * smallGap) /
+                  (_kSmallRow.length * 2))
+              .clamp(8.0, _kSmallRadius);
+      final largeRadius =
+          ((available - (_kLargeRow.length - 1) * largeGap) /
+                  (_kLargeRow.length * 2))
+              .clamp(12.0, _kLargeRadius);
+
       return Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // Small-button row with the Alt-lock badge in the top-right corner.
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              _buildRow(_kSmallRow, _kSmallRadius, _kSmallGap, alt: _altLock),
-              Positioned(
-                top: -10,
-                right: -10,
-                child: _AltLockButton(
-                  active: _altLock,
-                  onTap: () => setState(() => _altLock = !_altLock),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: _kRowGap),
-          _buildRow(_kLargeRow, _kLargeRadius, _kLargeGap, alt: false),
+          if (_expanded) ...[
+            _buildPanel(
+              smallRadius: smallRadius,
+              smallGap: smallGap,
+              largeRadius: largeRadius,
+              largeGap: largeGap,
+            ),
+            const SizedBox(height: 6),
+          ],
+          _buildPortraitToggle(),
         ],
       );
     });
   }
+
+  // ── Button panel (two rows + Alt lock badge) ──────────────────────────────
+
+  Widget _buildPanel({
+    required double smallRadius,
+    required double smallGap,
+    required double largeRadius,
+    required double largeGap,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            _buildRow(_kSmallRow, smallRadius, smallGap, alt: _altLock),
+            Positioned(
+              top: -10,
+              right: -10,
+              child: _AltLockButton(
+                active: _altLock,
+                onTap: () => setState(() => _altLock = !_altLock),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: _kRowGap),
+        _buildRow(_kLargeRow, largeRadius, largeGap, alt: false),
+      ],
+    );
+  }
+
+  // ── Portrait toggle (chevron) ─────────────────────────────────────────────
+
+  Widget _buildPortraitToggle() {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => setState(() => _expanded = !_expanded),
+      child: Container(
+        width: _kToggleSize,
+        height: _kToggleSize,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: _expanded
+              ? Colors.white.withOpacity(0.20)
+              : Colors.black.withOpacity(0.45),
+          border: Border.all(
+            color: Colors.white.withOpacity(0.55),
+            width: 1.5,
+          ),
+        ),
+        child: Icon(
+          // ‹ collapse (panel is open), › expand (panel is hidden)
+          _expanded ? Icons.chevron_right : Icons.chevron_left,
+          color: Colors.white.withOpacity(0.85),
+          size: 20,
+        ),
+      ),
+    );
+  }
+
+  // ── Row builder ───────────────────────────────────────────────────────────
 
   Widget _buildRow(
     List<_Btn> defs,
@@ -130,7 +224,7 @@ class _GamepadButtonsState extends State<GamepadButtons> {
   }
 }
 
-// ── Alt-lock toggle badge ────────────────────────────────────────────────────
+// ── Alt-lock toggle badge ─────────────────────────────────────────────────
 
 class _AltLockButton extends StatelessWidget {
   final bool active;
@@ -185,10 +279,6 @@ class _GamepadButton extends StatefulWidget {
   final _Btn def;
   final double radius;
   final FFI ffi;
-
-  /// Whether to send the Alt modifier with this button press.
-  /// Captured at pointer-down so that down/up always use the same modifier,
-  /// even if the Alt lock is toggled mid-press.
   final bool alt;
 
   const _GamepadButton({
@@ -206,8 +296,9 @@ class _GamepadButton extends StatefulWidget {
 class _GamepadButtonState extends State<_GamepadButton> {
   bool _pressed = false;
 
-  /// Alt value captured at the moment the button was pressed.
-  /// Ensures key-up carries the same modifier as key-down.
+  /// Snapshot of the alt modifier at the moment the button was pressed.
+  /// Guarantees key-up always carries the same modifier as its key-down,
+  /// even if the Alt lock is toggled mid-press.
   bool _altAtPress = false;
 
   void _send(bool down, {required bool alt}) {
@@ -225,7 +316,7 @@ class _GamepadButtonState extends State<_GamepadButton> {
 
   void _onDown() {
     if (_pressed) return;
-    _altAtPress = widget.alt; // snapshot modifier state at press time
+    _altAtPress = widget.alt;
     _send(true, alt: _altAtPress);
     setState(() => _pressed = true);
   }
@@ -245,7 +336,6 @@ class _GamepadButtonState extends State<_GamepadButton> {
   @override
   Widget build(BuildContext context) {
     final d = widget.radius * 2;
-    // Tint the button amber when Alt lock is active to give visual feedback.
     final borderColor = widget.alt
         ? Colors.amber.withOpacity(0.80)
         : Colors.white.withOpacity(0.55);
