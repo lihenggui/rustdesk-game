@@ -18,6 +18,9 @@ const double _kSmallGap = 5.0;
 /// Vertical gap between the two rows.
 const double _kRowGap = 10.0;
 
+/// Alt-lock indicator button size (diameter).
+const double _kAltLockSize = 22.0;
+
 // ── Button definitions ──────────────────────────────────────────────────────
 
 class _Btn {
@@ -34,7 +37,7 @@ const List<_Btn> _kLargeRow = [
   _Btn("'", "'"),
 ];
 
-/// Top row – nine shortcut keys (smaller).
+/// Top row – nine shortcut keys (smaller, affected by Alt lock).
 const List<_Btn> _kSmallRow = [
   _Btn('A', 'a'),
   _Btn('S', 's'),
@@ -54,9 +57,9 @@ const List<_Btn> _kSmallRow = [
 /// Visibility is driven by [VirtualJoystickState] — the same menu toggle
 /// that controls the left-side joystick.
 ///
-/// Each button uses [Listener] with [HitTestBehavior.opaque] so that touches
-/// on the buttons are NOT forwarded to the remote-desktop gesture handler.
-class GamepadButtons extends StatelessWidget {
+/// A small Alt-lock toggle sits at the top-right corner of the small-buttons
+/// row. When active, every small button sends Alt+[key] instead of [key].
+class GamepadButtons extends StatefulWidget {
   final FFI ffi;
   final String id;
 
@@ -64,31 +67,114 @@ class GamepadButtons extends StatelessWidget {
       : super(key: key);
 
   @override
+  State<GamepadButtons> createState() => _GamepadButtonsState();
+}
+
+class _GamepadButtonsState extends State<GamepadButtons> {
+  /// Whether the Alt modifier is locked on for the small-button row.
+  bool _altLock = false;
+
+  @override
   Widget build(BuildContext context) {
     return Obx(() {
-      if (!VirtualJoystickState.find(id).value) return const SizedBox.shrink();
+      if (!VirtualJoystickState.find(widget.id).value) {
+        return const SizedBox.shrink();
+      }
 
       return Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          _buildRow(_kSmallRow, _kSmallRadius, _kSmallGap),
+          // Small-button row with the Alt-lock badge in the top-right corner.
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              _buildRow(_kSmallRow, _kSmallRadius, _kSmallGap, alt: _altLock),
+              Positioned(
+                top: -10,
+                right: -10,
+                child: _AltLockButton(
+                  active: _altLock,
+                  onTap: () => setState(() => _altLock = !_altLock),
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: _kRowGap),
-          _buildRow(_kLargeRow, _kLargeRadius, _kLargeGap),
+          _buildRow(_kLargeRow, _kLargeRadius, _kLargeGap, alt: false),
         ],
       );
     });
   }
 
-  Widget _buildRow(List<_Btn> defs, double radius, double gap) {
+  Widget _buildRow(
+    List<_Btn> defs,
+    double radius,
+    double gap, {
+    required bool alt,
+  }) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         for (int i = 0; i < defs.length; i++) ...[
           if (i > 0) SizedBox(width: gap),
-          _GamepadButton(def: defs[i], radius: radius, ffi: ffi),
+          _GamepadButton(
+            def: defs[i],
+            radius: radius,
+            ffi: widget.ffi,
+            alt: alt,
+          ),
         ],
       ],
+    );
+  }
+}
+
+// ── Alt-lock toggle badge ────────────────────────────────────────────────────
+
+class _AltLockButton extends StatelessWidget {
+  final bool active;
+  final VoidCallback onTap;
+
+  const _AltLockButton({required this.active, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        width: _kAltLockSize,
+        height: _kAltLockSize,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: active
+              ? Colors.amber.withOpacity(0.85)
+              : Colors.black.withOpacity(0.55),
+          border: Border.all(
+            color: active
+                ? Colors.amber.withOpacity(0.95)
+                : Colors.white.withOpacity(0.55),
+            width: 1.5,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(3.0),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              'Alt',
+              style: TextStyle(
+                color: active
+                    ? Colors.black.withOpacity(0.85)
+                    : Colors.white.withOpacity(0.80),
+                fontWeight: FontWeight.bold,
+                height: 1.0,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -100,11 +186,17 @@ class _GamepadButton extends StatefulWidget {
   final double radius;
   final FFI ffi;
 
+  /// Whether to send the Alt modifier with this button press.
+  /// Captured at pointer-down so that down/up always use the same modifier,
+  /// even if the Alt lock is toggled mid-press.
+  final bool alt;
+
   const _GamepadButton({
     Key? key,
     required this.def,
     required this.radius,
     required this.ffi,
+    required this.alt,
   }) : super(key: key);
 
   @override
@@ -114,13 +206,17 @@ class _GamepadButton extends StatefulWidget {
 class _GamepadButtonState extends State<_GamepadButton> {
   bool _pressed = false;
 
-  void _send(bool down) {
+  /// Alt value captured at the moment the button was pressed.
+  /// Ensures key-up carries the same modifier as key-down.
+  bool _altAtPress = false;
+
+  void _send(bool down, {required bool alt}) {
     bind.sessionInputKey(
       sessionId: widget.ffi.sessionId,
       name: widget.def.key,
       down: down,
       press: false,
-      alt: false,
+      alt: alt,
       ctrl: false,
       shift: false,
       command: false,
@@ -129,26 +225,31 @@ class _GamepadButtonState extends State<_GamepadButton> {
 
   void _onDown() {
     if (_pressed) return;
-    _send(true);
+    _altAtPress = widget.alt; // snapshot modifier state at press time
+    _send(true, alt: _altAtPress);
     setState(() => _pressed = true);
   }
 
   void _onUp() {
     if (!_pressed) return;
-    _send(false);
+    _send(false, alt: _altAtPress);
     setState(() => _pressed = false);
   }
 
   @override
   void dispose() {
-    // Release the key if the widget is removed while the button is held.
-    if (_pressed) _send(false);
+    if (_pressed) _send(false, alt: _altAtPress);
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final d = widget.radius * 2;
+    // Tint the button amber when Alt lock is active to give visual feedback.
+    final borderColor = widget.alt
+        ? Colors.amber.withOpacity(0.80)
+        : Colors.white.withOpacity(0.55);
+
     return Listener(
       behavior: HitTestBehavior.opaque,
       onPointerDown: (_) => _onDown(),
@@ -162,10 +263,7 @@ class _GamepadButtonState extends State<_GamepadButton> {
           color: _pressed
               ? Colors.white.withOpacity(0.45)
               : Colors.black.withOpacity(0.35),
-          border: Border.all(
-            color: Colors.white.withOpacity(0.55),
-            width: 1.5,
-          ),
+          border: Border.all(color: borderColor, width: 1.5),
         ),
         child: Padding(
           padding: const EdgeInsets.all(4.0),
@@ -174,7 +272,9 @@ class _GamepadButtonState extends State<_GamepadButton> {
             child: Text(
               widget.def.label,
               style: TextStyle(
-                color: Colors.white.withOpacity(0.90),
+                color: widget.alt
+                    ? Colors.amber.withOpacity(0.95)
+                    : Colors.white.withOpacity(0.90),
                 fontSize: widget.radius * 0.78,
                 fontWeight: FontWeight.bold,
                 height: 1.0,
