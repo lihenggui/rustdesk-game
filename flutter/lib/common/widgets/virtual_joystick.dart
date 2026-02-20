@@ -167,14 +167,14 @@ class _JoystickPainter extends CustomPainter {
       c,
       _kBaseRadius,
       Paint()
-        ..color = Colors.black.withValues(alpha:0.30)
+        ..color = Colors.black.withOpacity(0.30)
         ..style = PaintingStyle.fill,
     );
     canvas.drawCircle(
       c,
       _kBaseRadius,
       Paint()
-        ..color = Colors.white.withValues(alpha:0.50)
+        ..color = Colors.white.withOpacity(0.50)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.0,
     );
@@ -188,14 +188,14 @@ class _JoystickPainter extends CustomPainter {
       sc,
       _kStickRadius,
       Paint()
-        ..color = Colors.white.withValues(alpha:0.60)
+        ..color = Colors.white.withOpacity(0.60)
         ..style = PaintingStyle.fill,
     );
     canvas.drawCircle(
       sc,
       _kStickRadius,
       Paint()
-        ..color = Colors.white.withValues(alpha:0.85)
+        ..color = Colors.white.withOpacity(0.85)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5,
     );
@@ -203,7 +203,7 @@ class _JoystickPainter extends CustomPainter {
 
   void _drawArrows(Canvas canvas, Offset c) {
     final p = Paint()
-      ..color = Colors.white.withValues(alpha:0.45)
+      ..color = Colors.white.withOpacity(0.45)
       ..style = PaintingStyle.fill;
     const ao = _kArrowOffset;
     const aw = _kArrowHalfWidth;

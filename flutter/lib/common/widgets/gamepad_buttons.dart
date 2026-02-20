@@ -182,17 +182,17 @@ class _GamepadButtonsState extends State<GamepadButtons> {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: _expanded
-              ? Colors.white.withValues(alpha: 0.20)
-              : Colors.black.withValues(alpha: 0.45),
+              ? Colors.white.withOpacity(0.20)
+              : Colors.black.withOpacity(0.45),
           border: Border.all(
-            color: Colors.white.withValues(alpha: 0.55),
+            color: Colors.white.withOpacity(0.55),
             width: 1.5,
           ),
         ),
         child: Icon(
           // ‹ collapse (panel is open), › expand (panel is hidden)
           _expanded ? Icons.chevron_right : Icons.chevron_left,
-          color: Colors.white.withValues(alpha:0.85),
+          color: Colors.white.withOpacity(0.85),
           size: 20,
         ),
       ),
@@ -243,12 +243,12 @@ class _AltLockButton extends StatelessWidget {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: active
-              ? Colors.amber.withValues(alpha:0.85)
-              : Colors.black.withValues(alpha:0.55),
+              ? Colors.amber.withOpacity(0.85)
+              : Colors.black.withOpacity(0.55),
           border: Border.all(
             color: active
-                ? Colors.amber.withValues(alpha:0.95)
-                : Colors.white.withValues(alpha:0.55),
+                ? Colors.amber.withOpacity(0.95)
+                : Colors.white.withOpacity(0.55),
             width: 1.5,
           ),
         ),
@@ -260,8 +260,8 @@ class _AltLockButton extends StatelessWidget {
               'Alt',
               style: TextStyle(
                 color: active
-                    ? Colors.black.withValues(alpha:0.85)
-                    : Colors.white.withValues(alpha:0.80),
+                    ? Colors.black.withOpacity(0.85)
+                    : Colors.white.withOpacity(0.80),
                 fontWeight: FontWeight.bold,
                 height: 1.0,
               ),
@@ -337,8 +337,8 @@ class _GamepadButtonState extends State<_GamepadButton> {
   Widget build(BuildContext context) {
     final d = widget.radius * 2;
     final borderColor = widget.alt
-        ? Colors.amber.withValues(alpha:0.80)
-        : Colors.white.withValues(alpha:0.55);
+        ? Colors.amber.withOpacity(0.80)
+        : Colors.white.withOpacity(0.55);
 
     return Listener(
       behavior: HitTestBehavior.opaque,
@@ -351,8 +351,8 @@ class _GamepadButtonState extends State<_GamepadButton> {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: _pressed
-              ? Colors.white.withValues(alpha:0.45)
-              : Colors.black.withValues(alpha:0.35),
+              ? Colors.white.withOpacity(0.45)
+              : Colors.black.withOpacity(0.35),
           border: Border.all(color: borderColor, width: 1.5),
         ),
         child: Padding(
@@ -363,8 +363,8 @@ class _GamepadButtonState extends State<_GamepadButton> {
               widget.def.label,
               style: TextStyle(
                 color: widget.alt
-                    ? Colors.amber.withValues(alpha:0.95)
-                    : Colors.white.withValues(alpha:0.90),
+                    ? Colors.amber.withOpacity(0.95)
+                    : Colors.white.withOpacity(0.90),
                 fontSize: widget.radius * 0.78,
                 fontWeight: FontWeight.bold,
                 height: 1.0,
