@@ -15,7 +15,9 @@ const double _kSmallRadius = 18.0;
 const double _kLargeGap = 8.0;
 const double _kSmallGap = 5.0;
 const double _kRowGap = 10.0;
-const double _kAltLockSize = 22.0;
+
+/// Alt-lock badge size – kept small so it fits beside the number row.
+const double _kAltLockSize = 16.0;
 
 /// Portrait expand/collapse toggle diameter.
 const double _kToggleSize = 34.0;
@@ -41,7 +43,16 @@ const List<_Btn> _kLargeRow = [
   _Btn('N', 'n'),
 ];
 
-/// Top shortcut row – QWERTY keys (affected by Alt lock).
+/// Top number row – 6-0 on the main keyboard (not numpad, not Alt-affected).
+const List<_Btn> _kNumberRow = [
+  _Btn('6', '6'),
+  _Btn('7', '7'),
+  _Btn('8', '8'),
+  _Btn('9', '9'),
+  _Btn('0', '0'),
+];
+
+/// Second row – QWERTY keys (affected by Alt lock).
 const List<_Btn> _kQwertyRow = [
   _Btn('Q', 'q'),
   _Btn('W', 'w'),
@@ -114,12 +125,13 @@ class _GamepadButtonsState extends State<GamepadButtons> {
           (screenWidth - _kJoystickReserved).clamp(100.0, double.infinity);
 
       // Derive button radii so all rows fit inside `available`.
-      // Use _kQwertyRow (5 buttons) as the sizing constraint – it's the widest.
+      // The top row (number row + 4dp gap + alt badge) is the widest constraint.
       const smallGap = 3.0;
       const largeGap = 5.0;
+      const altPadding = 4.0 + _kAltLockSize; // gap + badge
       final smallRadius =
-          ((available - (_kQwertyRow.length - 1) * smallGap) /
-                  (_kQwertyRow.length * 2))
+          ((available - (_kNumberRow.length - 1) * smallGap - altPadding) /
+                  (_kNumberRow.length * 2))
               .clamp(8.0, _kSmallRadius);
       final largeRadius =
           ((available - (_kLargeRow.length - 1) * largeGap) /
@@ -157,14 +169,22 @@ class _GamepadButtonsState extends State<GamepadButtons> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        // Alt-lock badge: right-aligned above key rows, inside panel bounds
-        _AltLockButton(
-          active: _altLock,
-          onTap: () => setState(() => _altLock = !_altLock),
+        // Number row with Alt badge tucked to the right – no overlap possible.
+        // Alt does NOT affect the number row.
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildRow(_kNumberRow, smallRadius, smallGap, alt: false),
+            const SizedBox(width: 4),
+            _AltLockButton(
+              active: _altLock,
+              onTap: () => setState(() => _altLock = !_altLock),
+            ),
+          ],
         ),
-        const SizedBox(height: 3),
+        const SizedBox(height: _kRowGap / 2),
         _buildRow(_kQwertyRow, smallRadius, smallGap, alt: _altLock),
-        const SizedBox(height: _kRowGap / 2), // tighter gap: same key family
+        const SizedBox(height: _kRowGap / 2),
         _buildRow(_kAsdfRow, smallRadius, smallGap, alt: _altLock),
         const SizedBox(height: _kRowGap),
         _buildRow(_kLargeRow, largeRadius, largeGap, alt: false),
