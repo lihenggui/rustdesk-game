@@ -50,12 +50,13 @@ const List<_Btn> _kQwertyRow = [
   _Btn('T', 't'),
 ];
 
-/// Middle shortcut row – ASDF keys (affected by Alt lock).
+/// Middle shortcut row – ASDFG keys (affected by Alt lock).
 const List<_Btn> _kAsdfRow = [
   _Btn('A', 'a'),
   _Btn('S', 's'),
   _Btn('D', 'd'),
   _Btn('F', 'f'),
+  _Btn('G', 'g'),
 ];
 
 // ── Public widget ────────────────────────────────────────────────────────────
