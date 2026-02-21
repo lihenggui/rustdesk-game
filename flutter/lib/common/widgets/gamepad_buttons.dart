@@ -324,16 +324,42 @@ class _GamepadButtonState extends State<_GamepadButton> {
   bool _altAtPress = false;
 
   void _send(bool down, {required bool alt}) {
+    // When alt is active, explicitly press/release VK_MENU so the remote OS
+    // receives a real Alt key event rather than relying on the modifier flag.
+    if (alt && down) {
+      bind.sessionInputKey(
+        sessionId: widget.ffi.sessionId,
+        name: 'VK_MENU',
+        down: true,
+        press: false,
+        alt: false,
+        ctrl: false,
+        shift: false,
+        command: false,
+      );
+    }
     bind.sessionInputKey(
       sessionId: widget.ffi.sessionId,
       name: widget.def.key,
       down: down,
       press: false,
-      alt: alt,
+      alt: false,
       ctrl: false,
       shift: false,
       command: false,
     );
+    if (alt && !down) {
+      bind.sessionInputKey(
+        sessionId: widget.ffi.sessionId,
+        name: 'VK_MENU',
+        down: false,
+        press: false,
+        alt: false,
+        ctrl: false,
+        shift: false,
+        command: false,
+      );
+    }
   }
 
   void _onDown() {
