@@ -544,6 +544,11 @@ jobs:
           # flutter build ipa --release --obfuscate --split-debug-info=./split-debug-info --no-codesign
           # for easy debugging
           flutter build ipa --release --no-codesign
+          # --no-codesign only produces .xcarchive; manually package into unsigned IPA
+          APP=$(ls build/ios/archive/Runner.xcarchive/Products/Applications/)
+          mkdir -p build/ios/ipa/Payload
+          cp -r "build/ios/archive/Runner.xcarchive/Products/Applications/${APP}" build/ios/ipa/Payload/
+          cd build/ios/ipa && zip -r "rustdesk-${{ env.VERSION }}-unsigned.ipa" Payload
 
       - name: Upload Artifacts
         if: env.UPLOAD_ARTIFACT == 'true'
