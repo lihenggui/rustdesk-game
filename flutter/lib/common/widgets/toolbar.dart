@@ -165,6 +165,10 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
       onPressed: () {
         final state = VirtualJoystickState.find(id);
         state.value = !state.value;
+        bind.setLocalFlutterOption(
+          k: kOptionShowVirtualJoystick,
+          v: state.value ? 'Y' : 'N',
+        );
       },
     ));
   }

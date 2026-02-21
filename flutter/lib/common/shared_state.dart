@@ -1,4 +1,5 @@
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:get/get.dart';
 
 import '../consts.dart';
@@ -56,11 +57,13 @@ class VirtualJoystickState {
 
   static void init(String id) {
     final key = tag(id);
+    // Load last-saved global preference (not per-peer)
+    final savedValue =
+        bind.getLocalFlutterOption(k: kOptionShowVirtualJoystick) == 'Y';
     if (!Get.isRegistered<RxBool>(tag: key)) {
-      final RxBool state = false.obs;
-      Get.put<RxBool>(state, tag: key);
+      Get.put<RxBool>(savedValue.obs, tag: key);
     } else {
-      Get.find<RxBool>(tag: key).value = false;
+      Get.find<RxBool>(tag: key).value = savedValue;
     }
   }
 

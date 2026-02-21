@@ -32,25 +32,30 @@ class _Btn {
   const _Btn(this.label, this.key);
 }
 
-/// Bottom row – four main action buttons (larger).
+/// Bottom row – five main action buttons (larger).
 const List<_Btn> _kLargeRow = [
   _Btn('Spc', 'VK_SPACE'),
   _Btn('Tab', 'VK_TAB'),
   _Btn('C', 'c'),
   _Btn("'", "'"),
+  _Btn('N', 'n'),
 ];
 
-/// Top row – nine shortcut keys (affected by Alt lock).
-const List<_Btn> _kSmallRow = [
-  _Btn('A', 'a'),
-  _Btn('S', 's'),
-  _Btn('D', 'd'),
-  _Btn('F', 'f'),
+/// Top shortcut row – QWERTY keys (affected by Alt lock).
+const List<_Btn> _kQwertyRow = [
   _Btn('Q', 'q'),
   _Btn('W', 'w'),
   _Btn('E', 'e'),
   _Btn('R', 'r'),
   _Btn('T', 't'),
+];
+
+/// Middle shortcut row – ASDF keys (affected by Alt lock).
+const List<_Btn> _kAsdfRow = [
+  _Btn('A', 'a'),
+  _Btn('S', 's'),
+  _Btn('D', 'd'),
+  _Btn('F', 'f'),
 ];
 
 // ── Public widget ────────────────────────────────────────────────────────────
@@ -107,12 +112,13 @@ class _GamepadButtonsState extends State<GamepadButtons> {
       final available =
           (screenWidth - _kJoystickReserved).clamp(100.0, double.infinity);
 
-      // Derive button radii so both rows fit exactly inside `available`.
+      // Derive button radii so all rows fit inside `available`.
+      // Use _kQwertyRow (5 buttons) as the sizing constraint – it's the widest.
       const smallGap = 3.0;
       const largeGap = 5.0;
       final smallRadius =
-          ((available - (_kSmallRow.length - 1) * smallGap) /
-                  (_kSmallRow.length * 2))
+          ((available - (_kQwertyRow.length - 1) * smallGap) /
+                  (_kQwertyRow.length * 2))
               .clamp(8.0, _kSmallRadius);
       final largeRadius =
           ((available - (_kLargeRow.length - 1) * largeGap) /
@@ -150,20 +156,15 @@ class _GamepadButtonsState extends State<GamepadButtons> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        Stack(
-          clipBehavior: Clip.none,
-          children: [
-            _buildRow(_kSmallRow, smallRadius, smallGap, alt: _altLock),
-            Positioned(
-              top: -10,
-              right: -10,
-              child: _AltLockButton(
-                active: _altLock,
-                onTap: () => setState(() => _altLock = !_altLock),
-              ),
-            ),
-          ],
+        // Alt-lock badge: right-aligned above key rows, inside panel bounds
+        _AltLockButton(
+          active: _altLock,
+          onTap: () => setState(() => _altLock = !_altLock),
         ),
+        const SizedBox(height: 3),
+        _buildRow(_kQwertyRow, smallRadius, smallGap, alt: _altLock),
+        const SizedBox(height: _kRowGap / 2), // tighter gap: same key family
+        _buildRow(_kAsdfRow, smallRadius, smallGap, alt: _altLock),
         const SizedBox(height: _kRowGap),
         _buildRow(_kLargeRow, largeRadius, largeGap, alt: false),
       ],
