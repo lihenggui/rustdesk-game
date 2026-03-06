@@ -1417,3 +1417,207 @@ fn handle_screenshot(screenshot: Screenshot, msg: String, w: usize, h: usize, da
         log::error!("Failed to send screenshot, {}", e);
     }
 }
+
+// ──────────────────────────────────────────────────
+// Window capture for QQSG.exe
+// ──────────────────────────────────────────────────
+
+#[cfg(windows)]
+pub mod window_capture {
+    use super::*;
+    use scrap::{
+        codec::{Encoder, EncoderCfg},
+        convert_to_yuv,
+        dxgi::CapturerWindow,
+        vpxcodec::{VpxEncoderConfig, VpxVideoCodecId},
+        EncodeInput, PixelBuffer,
+    };
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    lazy_static::lazy_static! {
+        // display_idx -> (hwnd, service_name, stop_flag)
+        pub static ref WINDOW_CAPTURE_SERVICES: Mutex<HashMap<usize, WindowCaptureEntry>> = Mutex::new(HashMap::new());
+    }
+
+    pub struct WindowCaptureEntry {
+        pub hwnd: usize,
+        pub title: String,
+        pub width: i32,
+        pub height: i32,
+        pub stop_flag: Arc<AtomicBool>,
+    }
+
+    pub fn get_window_service_name(idx: usize) -> String {
+        format!("window{}", idx)
+    }
+
+    /// Start a window capture service for the given HWND at the given virtual display index.
+    /// Returns the GenericService handle.
+    pub fn start_window_capture(
+        display_idx: usize,
+        hwnd: usize,
+        title: String,
+        width: i32,
+        height: i32,
+    ) -> GenericService {
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let service_name = get_window_service_name(display_idx);
+
+        WINDOW_CAPTURE_SERVICES.lock().unwrap().insert(
+            display_idx,
+            WindowCaptureEntry {
+                hwnd,
+                title: title.clone(),
+                width,
+                height,
+                stop_flag: stop_flag.clone(),
+            },
+        );
+
+        let vs = VideoService {
+            sp: GenericService::new(service_name, true),
+            idx: display_idx,
+            source: VideoSource::Monitor, // reuse Monitor source type
+        };
+
+        let sp_clone = vs.sp.clone();
+        let stop = stop_flag;
+
+        std::thread::spawn(move || {
+            if let Err(e) = run_window_capture(display_idx, hwnd, sp_clone.clone(), stop) {
+                log::error!("Window capture service {} error: {:?}", display_idx, e);
+            }
+            WINDOW_CAPTURE_SERVICES.lock().unwrap().remove(&display_idx);
+        });
+
+        vs.sp
+    }
+
+    /// Stop all window capture services.
+    pub fn stop_all_window_captures() {
+        let services = WINDOW_CAPTURE_SERVICES.lock().unwrap();
+        for (_, entry) in services.iter() {
+            entry.stop_flag.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Stop a specific window capture service.
+    pub fn stop_window_capture(display_idx: usize) {
+        if let Some(entry) = WINDOW_CAPTURE_SERVICES.lock().unwrap().get(&display_idx) {
+            entry.stop_flag.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Get the HWND for a given virtual display index (if it's a window capture).
+    pub fn get_window_hwnd(display_idx: usize) -> Option<usize> {
+        WINDOW_CAPTURE_SERVICES
+            .lock()
+            .unwrap()
+            .get(&display_idx)
+            .map(|e| e.hwnd)
+    }
+
+    /// Check if a display_idx corresponds to a window capture.
+    pub fn is_window_capture(display_idx: usize) -> bool {
+        WINDOW_CAPTURE_SERVICES
+            .lock()
+            .unwrap()
+            .contains_key(&display_idx)
+    }
+
+    fn run_window_capture(
+        display_idx: usize,
+        hwnd: usize,
+        sp: GenericService,
+        stop_flag: Arc<AtomicBool>,
+    ) -> ResultType<()> {
+        log::info!("Starting window capture for display_idx={}, hwnd={:#x}", display_idx, hwnd);
+
+        let capturer = CapturerWindow::new(hwnd as _).map_err(|e| hbb_common::anyhow::anyhow!("{}", e))?;
+        let width = capturer.width() as usize;
+        let height = capturer.height() as usize;
+
+        let quality = 0.5; // medium quality
+        let encoder_cfg = EncoderCfg::VPX(VpxEncoderConfig {
+            width: width as _,
+            height: height as _,
+            quality,
+            codec: VpxVideoCodecId::VP9,
+            keyframe_interval: None,
+        });
+        let use_i444 = Encoder::use_i444(&encoder_cfg);
+        let mut encoder = Encoder::new(encoder_cfg, use_i444)?;
+
+        let mut yuv = Vec::new();
+        let mut mid_data = Vec::new();
+        let mut pixel_data = Vec::new();
+        let mut encode_fail_counter = 0usize;
+        let mut first_frame = true;
+        let start = time::Instant::now();
+        let spf = Duration::from_millis(33); // ~30 FPS
+        let mut last_size_check = Instant::now();
+
+        while sp.ok() && !stop_flag.load(Ordering::Relaxed) {
+            // Check if window is still valid
+            if !crate::platform::windows::is_window_valid(hwnd) {
+                log::info!("Window {:#x} no longer valid, stopping capture", hwnd);
+                break;
+            }
+
+            // Periodically check window size changes
+            if last_size_check.elapsed() > Duration::from_secs(2) {
+                last_size_check = Instant::now();
+                if let Some((new_w, new_h)) = capturer.check_size_changed() {
+                    log::info!(
+                        "Window size changed to {}x{}, restarting capture",
+                        new_w, new_h
+                    );
+                    break; // Will be restarted by connection handler
+                }
+            }
+
+            let now = time::Instant::now();
+            let time = now - start;
+            let ms = (time.as_secs() * 1000 + time.subsec_millis() as u64) as i64;
+
+            match capturer.frame(&mut pixel_data) {
+                Ok(()) => {
+                    let pixelbuffer = PixelBuffer::with_BGRA(&pixel_data, width, height);
+                    convert_to_yuv(
+                        &pixelbuffer,
+                        encoder.yuvfmt(),
+                        &mut yuv,
+                        &mut mid_data,
+                    )?;
+
+                    match encoder.encode_to_message(EncodeInput::YUV(&yuv), ms) {
+                        Ok(mut vf) => {
+                            encode_fail_counter = 0;
+                            vf.display = display_idx as _;
+                            let mut msg = Message::new();
+                            msg.set_video_frame(vf);
+                            sp.send_video_frame(msg);
+                            first_frame = false;
+                        }
+                        Err(e) => {
+                            encode_fail_counter += 1;
+                            if encode_fail_counter > 30 {
+                                log::error!("Too many encode failures for window capture: {:?}", e);
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::trace!("Window capture frame error: {:?}", e);
+                }
+            }
+
+            std::thread::sleep(spf);
+        }
+
+        log::info!("Window capture stopped for display_idx={}", display_idx);
+        Ok(())
+    }
+}

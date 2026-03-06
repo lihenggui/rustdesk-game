@@ -1,6 +1,6 @@
 use std::mem::size_of;
 use winapi::{
-    shared::windef::{HBITMAP, HDC},
+    shared::windef::{HBITMAP, HDC, HWND, RECT},
     um::wingdi::{
         BitBlt,
         CreateCompatibleBitmap,
@@ -19,6 +19,7 @@ use winapi::{
         RGBQUAD,
         SRCCOPY,
     },
+    um::winuser::{GetClientRect, GetDC, ReleaseDC},
 };
 
 const PIXEL_WIDTH: i32 = 4;
@@ -173,6 +174,189 @@ impl Drop for CapturerGDI {
             DeleteDC(self.screen_dc);
             DeleteDC(self.dc);
             DeleteObject(self.bmp as _);
+        }
+    }
+}
+
+pub struct CapturerWindow {
+    hwnd: HWND,
+    window_dc: HDC,
+    dc: HDC,
+    bmp: HBITMAP,
+    width: i32,
+    height: i32,
+}
+
+unsafe impl Send for CapturerWindow {}
+
+impl CapturerWindow {
+    pub fn new(hwnd: HWND) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        unsafe {
+            if hwnd.is_null() {
+                return Err("Null HWND".into());
+            }
+            let mut rect: RECT = std::mem::zeroed();
+            if GetClientRect(hwnd, &mut rect) == 0 {
+                return Err("GetClientRect failed".into());
+            }
+            let width = rect.right - rect.left;
+            let height = rect.bottom - rect.top;
+            if width <= 0 || height <= 0 {
+                return Err("Window has zero size".into());
+            }
+
+            let window_dc = GetDC(hwnd);
+            if window_dc.is_null() {
+                return Err("GetDC failed".into());
+            }
+
+            let dc = CreateCompatibleDC(window_dc);
+            if dc.is_null() {
+                ReleaseDC(hwnd, window_dc);
+                return Err("CreateCompatibleDC failed".into());
+            }
+
+            let bmp = CreateCompatibleBitmap(window_dc, width, height);
+            if bmp.is_null() {
+                DeleteDC(dc);
+                ReleaseDC(hwnd, window_dc);
+                return Err("CreateCompatibleBitmap failed".into());
+            }
+
+            let res = SelectObject(dc, bmp as _);
+            if res.is_null() || res == HGDI_ERROR {
+                DeleteObject(bmp as _);
+                DeleteDC(dc);
+                ReleaseDC(hwnd, window_dc);
+                return Err("SelectObject failed".into());
+            }
+
+            Ok(Self {
+                hwnd,
+                window_dc,
+                dc,
+                bmp,
+                width,
+                height,
+            })
+        }
+    }
+
+    pub fn width(&self) -> i32 {
+        self.width
+    }
+
+    pub fn height(&self) -> i32 {
+        self.height
+    }
+
+    pub fn hwnd(&self) -> HWND {
+        self.hwnd
+    }
+
+    // Check if window size changed; returns Some((new_w, new_h)) if changed
+    pub fn check_size_changed(&self) -> Option<(i32, i32)> {
+        unsafe {
+            let mut rect: RECT = std::mem::zeroed();
+            if GetClientRect(self.hwnd, &mut rect) == 0 {
+                return None;
+            }
+            let w = rect.right - rect.left;
+            let h = rect.bottom - rect.top;
+            if w != self.width || h != self.height {
+                Some((w, h))
+            } else {
+                None
+            }
+        }
+    }
+
+    pub fn frame(&self, data: &mut Vec<u8>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        unsafe {
+            let res = BitBlt(
+                self.dc,
+                0,
+                0,
+                self.width,
+                self.height,
+                self.window_dc,
+                0,
+                0,
+                SRCCOPY,
+            );
+            if res == 0 {
+                return Err("BitBlt failed for window capture".into());
+            }
+
+            let stride = self.width * PIXEL_WIDTH;
+            let size: usize = (stride * self.height) as usize;
+            let mut data1: Vec<u8> = Vec::with_capacity(size);
+            data1.set_len(size);
+            data.resize(size, 0);
+
+            let mut bmi = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: size_of::<BITMAPINFOHEADER>() as _,
+                    biWidth: self.width as _,
+                    biHeight: self.height as _,
+                    biPlanes: 1,
+                    biBitCount: (8 * PIXEL_WIDTH) as _,
+                    biCompression: BI_RGB,
+                    biSizeImage: (self.width * self.height * PIXEL_WIDTH) as _,
+                    biXPelsPerMeter: 0,
+                    biYPelsPerMeter: 0,
+                    biClrUsed: 0,
+                    biClrImportant: 0,
+                },
+                bmiColors: [RGBQUAD {
+                    rgbBlue: 0,
+                    rgbGreen: 0,
+                    rgbRed: 0,
+                    rgbReserved: 0,
+                }],
+            };
+
+            let res = GetDIBits(
+                self.dc,
+                self.bmp,
+                0,
+                self.height as _,
+                &mut data[0] as *mut u8 as _,
+                &mut bmi as _,
+                DIB_RGB_COLORS,
+            );
+            if res == 0 {
+                return Err("GetDIBits failed for window capture".into());
+            }
+            // Mirror + rotate to correct orientation (same as CapturerGDI)
+            crate::common::ARGBMirror(
+                data.as_ptr(),
+                stride,
+                data1.as_mut_ptr(),
+                stride,
+                self.width,
+                self.height,
+            );
+            crate::common::ARGBRotate(
+                data1.as_ptr(),
+                stride,
+                data.as_mut_ptr(),
+                stride,
+                self.width,
+                self.height,
+                crate::RotationMode::kRotate180,
+            );
+            Ok(())
+        }
+    }
+}
+
+impl Drop for CapturerWindow {
+    fn drop(&mut self) {
+        unsafe {
+            DeleteDC(self.dc);
+            DeleteObject(self.bmp as _);
+            ReleaseDC(self.hwnd, self.window_dc);
         }
     }
 }

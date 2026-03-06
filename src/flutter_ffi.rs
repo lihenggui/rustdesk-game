@@ -82,6 +82,9 @@ fn initialize(app_dir: &str, custom_client_config: &str) {
     {
         // core_main's init_log does not work for flutter since it is only applied to its load_library in main.c
         hbb_common::init_log(false, "flutter_ffi");
+        crate::common::apply_build_time_server_config();
+        crate::common::test_rendezvous_server();
+        crate::common::test_nat_type();
     }
 }
 
@@ -270,6 +273,12 @@ pub fn session_close(session_id: SessionID) {
         crate::keyboard::release_remote_keys("map");
         session.close_event_stream(session_id);
         session.close();
+    }
+}
+
+pub fn session_request_window_capture(session_id: SessionID, start: bool) {
+    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
+        session.request_window_capture(start);
     }
 }
 
@@ -1101,6 +1110,10 @@ pub fn main_discover() {
 
 pub fn main_get_api_server() -> String {
     get_api_server()
+}
+
+pub fn main_resolve_avatar_url(avatar: String) -> SyncReturn<String> {
+    SyncReturn(resolve_avatar_url(avatar))
 }
 
 pub fn main_http_request(url: String, method: String, body: Option<String>, header: String) {
@@ -2778,10 +2791,13 @@ pub fn main_get_common(key: String) -> String {
         } else if key.starts_with("download-file-") {
             let _version = key.replace("download-file-", "");
             #[cfg(target_os = "windows")]
-            return match crate::platform::windows::is_msi_installed() {
-                Ok(true) => format!("gamedesk-{_version}-x86_64.msi"),
-                Ok(false) => format!("gamedesk-{_version}-x86_64.exe"),
-                Err(e) => {
+            return match (
+                crate::platform::windows::is_msi_installed(),
+                crate::common::is_custom_client(),
+            ) {
+                (Ok(true), false) => format!("gamedesk-{_version}-x86_64.msi"),
+                (Ok(true), true) | (Ok(false), _) => format!("gamedesk-{_version}-x86_64.exe"),
+                (Err(e), _) => {
                     log::error!("Failed to check if is msi: {}", e);
                     format!("error:update-failed-check-msi-tip")
                 }
@@ -2878,30 +2894,17 @@ pub fn main_set_common(_key: String, _value: String) {
                 if let Some(f) = new_version_file.to_str() {
                     // 1.4.0 does not support "--update"
                     // But we can assume that the new version supports it.
-                    #[cfg(target_os = "windows")]
-                    if f.ends_with(".exe") {
-                        if let Err(e) =
-                            crate::platform::run_exe_in_cur_session(f, vec!["--update"], false)
-                        {
-                            log::error!("Failed to run the update exe: {}", e);
-                        }
-                    } else if f.ends_with(".msi") {
-                        if let Err(e) = crate::platform::update_me_msi(f, false) {
-                            log::error!("Failed to run the update msi: {}", e);
-                        }
-                    } else {
-                        // unreachable!()
-                    }
-                    #[cfg(target_os = "macos")]
+
+                    #[cfg(any(target_os = "windows", target_os = "macos"))]
                     match crate::platform::update_to(f) {
                         Ok(_) => {
-                            log::info!("Update successfully!");
+                            log::info!("Update process is launched successfully!");
                         }
                         Err(e) => {
                             log::error!("Failed to update to new version, {}", e);
+                            fs::remove_file(f).ok();
                         }
                     }
-                    fs::remove_file(f).ok();
                 }
             }
         } else if _key == "extract-update-dmg" {

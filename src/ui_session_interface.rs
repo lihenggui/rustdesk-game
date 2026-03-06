@@ -846,6 +846,17 @@ impl<T: InvokeUiSession> Session<T> {
         self.send(Data::Message(msg_out));
     }
 
+    pub fn request_window_capture(&self, start: bool) {
+        let mut misc = Misc::new();
+        misc.set_window_capture_request(WindowCaptureRequest {
+            start,
+            ..Default::default()
+        });
+        let mut msg_out = Message::new();
+        msg_out.set_misc(misc);
+        self.send(Data::Message(msg_out));
+    }
+
     pub fn switch_display(&self, display: i32) {
         let (w, h) = match self.lc.read().unwrap().get_custom_resolution(display) {
             Some((w, h)) => (w, h),

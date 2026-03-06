@@ -560,7 +560,9 @@ impl Connection {
                     match data {
                         ipc::Data::Authorize => {
                             conn.require_2fa.take();
-                            conn.send_logon_response().await;
+                            if !conn.send_logon_response_and_keep_alive().await {
+                                break;
+                            }
                             if conn.port_forward_socket.is_some() {
                                 break;
                             }
@@ -1338,9 +1340,66 @@ impl Connection {
         crate::post_request(url, v.to_string(), "").await
     }
 
-    async fn send_logon_response(&mut self) {
+    fn normalize_port_forward_target(pf: &mut PortForward) -> (String, bool) {
+        let mut is_rdp = false;
+        if pf.host == "RDP" && pf.port == 0 {
+            pf.host = "localhost".to_owned();
+            pf.port = 3389;
+            is_rdp = true;
+        }
+        if pf.host.is_empty() {
+            pf.host = "localhost".to_owned();
+        }
+        (format!("{}:{}", pf.host, pf.port), is_rdp)
+    }
+
+    async fn connect_port_forward_if_needed(&mut self) -> bool {
+        if self.port_forward_socket.is_some() {
+            return true;
+        }
+        let Some(login_request::Union::PortForward(pf)) = self.lr.union.as_ref() else {
+            return true;
+        };
+        let mut pf = pf.clone();
+        let (mut addr, is_rdp) = Self::normalize_port_forward_target(&mut pf);
+        self.port_forward_address = addr.clone();
+        match timeout(3000, TcpStream::connect(&addr)).await {
+            Ok(Ok(sock)) => {
+                self.port_forward_socket = Some(Framed::new(sock, BytesCodec::new()));
+                true
+            }
+            Ok(Err(e)) => {
+                log::warn!("Port forward connect failed for {}: {}", addr, e);
+                if is_rdp {
+                    addr = "RDP".to_owned();
+                }
+                self.send_login_error(format!(
+                    "Failed to access remote {}. Please make sure it is reachable/open.",
+                    addr
+                ))
+                .await;
+                false
+            }
+            Err(e) => {
+                log::warn!("Port forward connect timed out for {}: {}", addr, e);
+                if is_rdp {
+                    addr = "RDP".to_owned();
+                }
+                self.send_login_error(format!(
+                    "Failed to access remote {}. Please make sure it is reachable/open.",
+                    addr
+                ))
+                .await;
+                false
+            }
+        }
+    }
+
+    // Returns whether this connection should be kept alive.
+    // `true` does not necessarily mean authorization succeeded (e.g. REQUIRE_2FA case).
+    async fn send_logon_response_and_keep_alive(&mut self) -> bool {
         if self.authorized {
-            return;
+            return true;
         }
         if self.require_2fa.is_some() && !self.is_recent_session(true) && !self.from_switch {
             self.require_2fa.as_ref().map(|totp| {
@@ -1371,7 +1430,11 @@ impl Connection {
                 }
             });
             self.send_login_error(crate::client::REQUIRE_2FA).await;
-            return;
+            // Keep the connection alive so the client can continue with 2FA.
+            return true;
+        }
+        if !self.connect_port_forward_if_needed().await {
+            return false;
         }
         self.authorized = true;
         let (conn_type, auth_conn_type) = if self.file_transfer.is_some() {
@@ -1494,7 +1557,7 @@ impl Connection {
             res.set_peer_info(pi);
             msg_out.set_login_response(res);
             self.send(msg_out).await;
-            return;
+            return true;
         }
         #[cfg(target_os = "linux")]
         if self.is_remote() {
@@ -1517,7 +1580,7 @@ impl Connection {
                 let mut msg_out = Message::new();
                 msg_out.set_login_response(res);
                 self.send(msg_out).await;
-                return;
+                return true;
             }
         }
         #[allow(unused_mut)]
@@ -1671,6 +1734,7 @@ impl Connection {
                 self.try_sub_monitor_services();
             }
         }
+        true
     }
 
     fn try_sub_camera_displays(&mut self) {
@@ -1813,6 +1877,7 @@ impl Connection {
             port_forward: self.port_forward_address.clone(),
             peer_id,
             name,
+            avatar: self.lr.avatar.clone(),
             authorized,
             keyboard: self.keyboard,
             clipboard: self.clipboard,
@@ -2178,33 +2243,8 @@ impl Connection {
                         sleep(1.).await;
                         return false;
                     }
-                    let mut is_rdp = false;
-                    if pf.host == "RDP" && pf.port == 0 {
-                        pf.host = "localhost".to_owned();
-                        pf.port = 3389;
-                        is_rdp = true;
-                    }
-                    if pf.host.is_empty() {
-                        pf.host = "localhost".to_owned();
-                    }
-                    let mut addr = format!("{}:{}", pf.host, pf.port);
-                    self.port_forward_address = addr.clone();
-                    match timeout(3000, TcpStream::connect(&addr)).await {
-                        Ok(Ok(sock)) => {
-                            self.port_forward_socket = Some(Framed::new(sock, BytesCodec::new()));
-                        }
-                        _ => {
-                            if is_rdp {
-                                addr = "RDP".to_owned();
-                            }
-                            self.send_login_error(format!(
-                                "Failed to access remote {}, please make sure if it is open",
-                                addr
-                            ))
-                            .await;
-                            return false;
-                        }
-                    }
+                    let (addr, _is_rdp) = Self::normalize_port_forward_target(&mut pf);
+                    self.port_forward_address = addr;
                 }
                 _ => {
                     if !self.check_privacy_mode_on().await {
@@ -2232,11 +2272,10 @@ impl Connection {
 
             // https://github.com/rustdesk/rustdesk-server-pro/discussions/646
             // `is_logon` is used to check login with `OPTION_ALLOW_LOGON_SCREEN_PASSWORD` == "Y".
-            // `is_logon_ui()` is used on Windows, because there's no good way to detect `is_locked()`.
-            // Detecting `is_logon_ui()` (if `LogonUI.exe` running) is a workaround.
+            // `is_logon_ui()` is a fallback for logon UI detection on Windows.
             #[cfg(target_os = "windows")]
             let is_logon = || {
-                crate::platform::is_prelogin() || {
+                crate::platform::is_prelogin() || crate::platform::is_locked() || {
                     match crate::platform::is_logon_ui() {
                         Ok(result) => result,
                         Err(e) => {
@@ -2275,7 +2314,9 @@ impl Connection {
                 if err_msg.is_empty() {
                     #[cfg(target_os = "linux")]
                     self.linux_headless_handle.wait_desktop_cm_ready().await;
-                    self.send_logon_response().await;
+                    if !self.send_logon_response_and_keep_alive().await {
+                        return false;
+                    }
                     self.try_start_cm(lr.my_id.clone(), lr.my_name.clone(), self.authorized);
                 } else {
                     self.send_login_error(err_msg).await;
@@ -2311,7 +2352,9 @@ impl Connection {
                     if err_msg.is_empty() {
                         #[cfg(target_os = "linux")]
                         self.linux_headless_handle.wait_desktop_cm_ready().await;
-                        self.send_logon_response().await;
+                        if !self.send_logon_response_and_keep_alive().await {
+                            return false;
+                        }
                         self.try_start_cm(lr.my_id, lr.my_name, self.authorized);
                     } else {
                         self.send_login_error(err_msg).await;
@@ -2329,7 +2372,9 @@ impl Connection {
                         self.update_failure(failure, true, 1);
                         self.require_2fa.take();
                         raii::AuthedConnID::set_session_2fa(self.session_key());
-                        self.send_logon_response().await;
+                        if !self.send_logon_response_and_keep_alive().await {
+                            return false;
+                        }
                         self.try_start_cm(
                             self.lr.my_id.to_owned(),
                             self.lr.my_name.to_owned(),
@@ -2380,7 +2425,9 @@ impl Connection {
                     if let Some((_instant, uuid_old)) = uuid_old {
                         if uuid == uuid_old {
                             self.from_switch = true;
-                            self.send_logon_response().await;
+                            if !self.send_logon_response_and_keep_alive().await {
+                                return false;
+                            }
                             self.try_start_cm(
                                 lr.my_id.clone(),
                                 lr.my_name.clone(),
@@ -2401,6 +2448,19 @@ impl Connection {
                 Some(message::Union::MouseEvent(mut me)) => {
                     if self.is_authed_view_camera_conn() {
                         return true;
+                    }
+                    // For window capture displays, translate window-relative coords to screen coords
+                    #[cfg(windows)]
+                    if let Some(hwnd) = video_service::window_capture::get_window_hwnd(self.display_idx) {
+                        use crate::common::input::{MOUSE_TYPE_MASK, MOUSE_TYPE_MOVE_RELATIVE};
+                        let evt_type = me.mask & MOUSE_TYPE_MASK;
+                        // Translate absolute coordinates (move/down/up) but not relative deltas
+                        if evt_type != MOUSE_TYPE_MOVE_RELATIVE {
+                            if let Some((sx, sy)) = crate::platform::windows::window_client_to_screen(hwnd, me.x, me.y) {
+                                me.x = sx;
+                                me.y = sy;
+                            }
+                        }
                     }
                     #[cfg(any(target_os = "android", target_os = "ios"))]
                     if let Err(e) = call_main_service_pointer_input("mouse", me.mask, me.x, me.y) {
@@ -3154,6 +3214,10 @@ impl Connection {
                             self.send(msg_out).await;
                         }
                     }
+                    #[cfg(windows)]
+                    Some(misc::Union::WindowCaptureRequest(req)) => {
+                        self.handle_window_capture_request(req).await;
+                    }
                     _ => {}
                 },
                 Some(message::Union::AudioFrame(frame)) => {
@@ -3475,7 +3539,25 @@ impl Connection {
     async fn handle_switch_display(&mut self, s: SwitchDisplay) {
         let display_idx = s.display as usize;
         if self.display_idx != display_idx {
+            // If switching to a window capture display, bring the window to front
+            #[cfg(windows)]
+            if let Some(hwnd) = video_service::window_capture::get_window_hwnd(display_idx) {
+                crate::platform::windows::bring_window_to_front(hwnd);
+            }
+
             if let Some(server) = self.server.upgrade() {
+                // For window capture displays, subscribe to the window service
+                #[cfg(windows)]
+                if video_service::window_capture::is_window_capture(display_idx) {
+                    let service_name = video_service::window_capture::get_window_service_name(display_idx);
+                    let mut lock = server.write().unwrap();
+                    lock.subscribe(&service_name, self.inner.clone(), true);
+                    self.display_idx = display_idx;
+                    drop(lock);
+                } else {
+                    self.switch_display_to(display_idx, server.clone());
+                }
+                #[cfg(not(windows))]
                 self.switch_display_to(display_idx, server.clone());
 
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -3491,16 +3573,91 @@ impl Connection {
                 }
             }
 
-            // Send display changed message.
-            // 1. For compatibility with old versions ( < 1.2.4 ).
-            // 2. Sciter version.
-            // 3. Update `SupportedResolutions`.
+            // Send display changed message (for non-window displays).
+            #[cfg(windows)]
+            if !video_service::window_capture::is_window_capture(self.display_idx) {
+                if let Some(msg_out) =
+                    video_service::make_display_changed_msg(self.display_idx, None, self.video_source())
+                {
+                    self.send(msg_out).await;
+                }
+            }
+            #[cfg(not(windows))]
             if let Some(msg_out) =
                 video_service::make_display_changed_msg(self.display_idx, None, self.video_source())
             {
                 self.send(msg_out).await;
             }
         }
+    }
+
+    #[cfg(windows)]
+    async fn handle_window_capture_request(&mut self, req: WindowCaptureRequest) {
+        use video_service::window_capture;
+
+        if !req.start {
+            // Stop all window captures
+            window_capture::stop_all_window_captures();
+            let mut resp = WindowCaptureResponse::new();
+            resp.success = true;
+            let mut misc = Misc::new();
+            misc.set_window_capture_response(resp);
+            let mut msg = Message::new();
+            msg.set_misc(misc);
+            self.send(msg).await;
+            return;
+        }
+
+        // Find all QQSG windows
+        let qqsg_windows = crate::platform::windows::find_all_qqsg_windows();
+
+        let mut resp = WindowCaptureResponse::new();
+        if qqsg_windows.is_empty() {
+            resp.success = false;
+            resp.error = "No QQSG.exe windows found".to_string();
+        } else {
+            // Stop existing captures first
+            window_capture::stop_all_window_captures();
+
+            // Base index: after physical displays
+            let base_idx = display_service::get_sync_displays().len() + 100; // offset by 100 to avoid collision
+
+            let mut window_infos = Vec::new();
+            if let Some(server) = self.server.upgrade() {
+                for (i, win) in qqsg_windows.iter().enumerate() {
+                    let display_idx = base_idx + i;
+                    let sp = window_capture::start_window_capture(
+                        display_idx,
+                        win.hwnd,
+                        win.title.clone(),
+                        win.width,
+                        win.height,
+                    );
+
+                    // Register service with the server
+                    {
+                        let mut lock = server.write().unwrap();
+                        lock.add_service(Box::new(sp));
+                    }
+
+                    let mut wi = WindowInfo::new();
+                    wi.display_idx = display_idx as i32;
+                    wi.width = win.width;
+                    wi.height = win.height;
+                    wi.window_title = win.title.clone();
+                    window_infos.push(wi);
+                }
+            }
+
+            resp.success = true;
+            resp.windows = window_infos.into();
+        }
+
+        let mut misc = Misc::new();
+        misc.set_window_capture_response(resp);
+        let mut msg = Message::new();
+        msg.set_misc(misc);
+        self.send(msg).await;
     }
 
     fn video_source(&self) -> VideoSource {
@@ -5346,9 +5503,8 @@ mod raii {
         }
 
         pub fn check_wake_lock_on_setting_changed() {
-            let current = config::Config::get_bool_option(
-                keys::OPTION_KEEP_AWAKE_DURING_INCOMING_SESSIONS,
-            );
+            let current =
+                config::Config::get_bool_option(keys::OPTION_KEEP_AWAKE_DURING_INCOMING_SESSIONS);
             let cached = *WAKELOCK_KEEP_AWAKE_OPTION.lock().unwrap();
             if cached != Some(current) {
                 Self::check_wake_lock();

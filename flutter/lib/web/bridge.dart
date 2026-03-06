@@ -174,6 +174,11 @@ class GamedeskImpl {
     return Future(() => js.context.callMethod('setByName', ['session_close']));
   }
 
+  Future<void> sessionRequestWindowCapture(
+      {required UuidValue sessionId, required bool start, dynamic hint}) {
+    throw UnimplementedError("sessionRequestWindowCapture");
+  }
+
   Future<void> sessionRefresh(
       {required UuidValue sessionId, required int display, dynamic hint}) {
     return Future(() => js.context.callMethod('setByName', ['refresh']));
@@ -2032,6 +2037,10 @@ class GamedeskImpl {
       required bool enable,
       dynamic hint}) {
     return false;
+  }
+
+  String mainResolveAvatarUrl({required String avatar, dynamic hint}) {
+    return js.context.callMethod('getByName', ['resolve_avatar_url', avatar])?.toString() ?? avatar;
   }
 
   void dispose() {}
