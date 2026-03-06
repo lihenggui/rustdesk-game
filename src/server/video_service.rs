@@ -38,8 +38,6 @@ use hbb_common::{
         Mutex as TokioMutex,
     },
 };
-#[cfg(windows)]
-use std::sync::atomic::AtomicBool;
 #[cfg(feature = "hwcodec")]
 use scrap::hwcodec::{HwRamEncoder, HwRamEncoderConfig};
 #[cfg(feature = "vram")]
@@ -1536,7 +1534,7 @@ pub mod window_capture {
     ) -> ResultType<()> {
         log::info!("Starting window capture for display_idx={}, hwnd={:#x}", display_idx, hwnd);
 
-        let capturer = CapturerWindow::new(hwnd as _).map_err(|e| anyhow::anyhow!("{}", e))?;
+        let capturer = CapturerWindow::new(hwnd as _).map_err(|e| hbb_common::anyhow::anyhow!("{}", e))?;
         let width = capturer.width() as usize;
         let height = capturer.height() as usize;
 
