@@ -38,6 +38,7 @@ lazy_static::lazy_static! {
 }
 
 fn initialize(app_dir: &str, custom_client_config: &str) {
+    *config::APP_NAME.write().unwrap() = "GameDesk".to_owned();
     flutter::async_tasks::start_flutter_async_runner();
     // `APP_DIR` is set in `main_get_data_dir_ios()` on iOS.
     #[cfg(not(target_os = "ios"))]
@@ -63,6 +64,7 @@ fn initialize(app_dir: &str, custom_client_config: &str) {
         hbb_common::init_log(false, "");
         #[cfg(feature = "mediacodec")]
         scrap::mediacodec::check_mediacodec();
+        crate::common::apply_build_time_server_config();
         crate::common::test_rendezvous_server();
         crate::common::test_nat_type();
     }
@@ -2783,8 +2785,8 @@ pub fn main_get_common(key: String) -> String {
             let _version = key.replace("download-file-", "");
             #[cfg(target_os = "windows")]
             return match crate::platform::windows::is_msi_installed() {
-                Ok(true) => format!("rustdesk-{_version}-x86_64.msi"),
-                Ok(false) => format!("rustdesk-{_version}-x86_64.exe"),
+                Ok(true) => format!("gamedesk-{_version}-x86_64.msi"),
+                Ok(false) => format!("gamedesk-{_version}-x86_64.exe"),
                 Err(e) => {
                     log::error!("Failed to check if is msi: {}", e);
                     format!("error:update-failed-check-msi-tip")
@@ -2793,9 +2795,9 @@ pub fn main_get_common(key: String) -> String {
             #[cfg(target_os = "macos")]
             {
                 return if cfg!(target_arch = "x86_64") {
-                    format!("rustdesk-{_version}-x86_64.dmg")
+                    format!("gamedesk-{_version}-x86_64.dmg")
                 } else if cfg!(target_arch = "aarch64") {
-                    format!("rustdesk-{_version}-aarch64.dmg")
+                    format!("gamedesk-{_version}-aarch64.dmg")
                 } else {
                     "error:unsupported".to_owned()
                 };
@@ -3011,6 +3013,7 @@ pub mod server_side {
                 crate::read_custom_client(&custom_client_config);
             }
         }
+        crate::common::apply_build_time_server_config();
         std::thread::spawn(move || start_server(true));
     }
 

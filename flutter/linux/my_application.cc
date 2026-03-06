@@ -108,7 +108,7 @@ static void my_application_activate(GApplication* application) {
   g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
   self->host_channel = fl_method_channel_new(
     fl_engine_get_binary_messenger(fl_view_get_engine(view)),
-    "org.rustdesk.rustdesk/host",
+    "me.blocker.gamedesk/host",
     FL_METHOD_CODEC(codec));
   fl_method_channel_set_method_call_handler(
     self->host_channel,

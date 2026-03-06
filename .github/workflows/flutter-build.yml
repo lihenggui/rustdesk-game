@@ -989,6 +989,8 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+          GAMEDESK_SERVER: ${{ secrets.GAMEDESK_SERVER }}
+          GAMEDESK_KEY: ${{ secrets.GAMEDESK_KEY }}
         run: |
           rustup target add ${{ matrix.job.target }}
           cargo install cargo-ndk --version ${{ env.CARGO_NDK_VERSION }} --locked
@@ -1025,12 +1027,18 @@ jobs:
         shell: bash
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          GAMEDESK_SERVER: ${{ secrets.GAMEDESK_SERVER }}
+          GAMEDESK_KEY: ${{ secrets.GAMEDESK_KEY }}
         run: |
           export PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH
           # Increase Gradle JVM memory for CI builds
           sed -i "s/org.gradle.jvmargs=-Xmx1024M/org.gradle.jvmargs=-Xmx2g/g" ./flutter/android/gradle.properties
           # temporary use debug sign config
           sed -i "s/signingConfigs.release/signingConfigs.debug/g" ./flutter/android/app/build.gradle
+          # Build dart-define flags for server config injection
+          DART_DEFINES=""
+          [ -n "$GAMEDESK_SERVER" ] && DART_DEFINES="$DART_DEFINES --dart-define=GAMEDESK_SERVER=$GAMEDESK_SERVER"
+          [ -n "$GAMEDESK_KEY" ] && DART_DEFINES="$DART_DEFINES --dart-define=GAMEDESK_KEY=$GAMEDESK_KEY"
           case ${{ matrix.job.target }} in
             aarch64-linux-android)
               mkdir -p ./flutter/android/app/src/main/jniLibs/arm64-v8a
@@ -1038,7 +1046,7 @@ jobs:
               cp ./target/${{ matrix.job.target }}/release/liblibgamedesk.so ./flutter/android/app/src/main/jniLibs/arm64-v8a/libgamedesk.so
               # build flutter
               pushd flutter
-              flutter build apk "--${{ matrix.job.reltype }}" --target-platform android-arm64 --split-per-abi
+              flutter build apk "--${{ matrix.job.reltype }}" --target-platform android-arm64 --split-per-abi $DART_DEFINES
               mv build/app/outputs/flutter-apk/app-arm64-v8a-${{ matrix.job.reltype }}.apk ../rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.apk
             ;;
             armv7-linux-androideabi)
@@ -1047,7 +1055,7 @@ jobs:
               cp ./target/${{ matrix.job.target }}/release/liblibgamedesk.so ./flutter/android/app/src/main/jniLibs/armeabi-v7a/libgamedesk.so
               # build flutter
               pushd flutter
-              flutter build apk "--${{ matrix.job.reltype }}" --target-platform android-arm --split-per-abi
+              flutter build apk "--${{ matrix.job.reltype }}" --target-platform android-arm --split-per-abi $DART_DEFINES
               mv build/app/outputs/flutter-apk/app-armeabi-v7a-${{ matrix.job.reltype }}.apk ../rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.apk
             ;;
             x86_64-linux-android)
@@ -1056,7 +1064,7 @@ jobs:
               cp ./target/${{ matrix.job.target }}/release/liblibgamedesk.so ./flutter/android/app/src/main/jniLibs/x86_64/libgamedesk.so
               # build flutter
               pushd flutter
-              flutter build apk "--${{ matrix.job.reltype }}" --target-platform android-x64 --split-per-abi
+              flutter build apk "--${{ matrix.job.reltype }}" --target-platform android-x64 --split-per-abi $DART_DEFINES
               mv build/app/outputs/flutter-apk/app-x86_64-${{ matrix.job.reltype }}.apk ../rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.apk
             ;;
             i686-linux-android)
@@ -1065,7 +1073,7 @@ jobs:
               cp ./target/${{ matrix.job.target }}/release/liblibgamedesk.so ./flutter/android/app/src/main/jniLibs/x86/libgamedesk.so
               # build flutter
               pushd flutter
-              flutter build apk "--${{ matrix.job.reltype }}" --target-platform android-x86 --split-per-abi
+              flutter build apk "--${{ matrix.job.reltype }}" --target-platform android-x86 --split-per-abi $DART_DEFINES
               mv build/app/outputs/flutter-apk/app-x86-${{ matrix.job.reltype }}.apk ../rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.apk
             ;;
           esac

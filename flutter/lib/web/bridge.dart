@@ -50,7 +50,7 @@ class EventToUI_Texture implements EventToUI {
   bool get field1 => f1;
 }
 
-class RustdeskImpl {
+class GamedeskImpl {
   Future<void> stopGlobalEventStream({required String appType, dynamic hint}) {
     throw UnimplementedError("stopGlobalEventStream");
   }
@@ -1614,8 +1614,8 @@ class RustdeskImpl {
   }
 
   bool isCustomClient({dynamic hint}) {
-    // is_custom_client() checks if app name is not "RustDesk"
-    return mainGetAppNameSync(hint: hint) != "RustDesk";
+    // is_custom_client() checks if app name is not "GameDesk"
+    return mainGetAppNameSync(hint: hint) != "GameDesk";
   }
 
   bool isDisableSettings({dynamic hint}) {

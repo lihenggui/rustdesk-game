@@ -7133,7 +7133,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustdesk"
+name = "gamedesk"
 version = "1.4.5"
 dependencies = [
  "android-wakelock",

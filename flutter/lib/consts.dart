@@ -49,6 +49,11 @@ const String kAppTypeDesktopViewCamera = "view camera";
 const String kAppTypeDesktopPortForward = "port forward";
 const String kAppTypeDesktopTerminal = "terminal";
 
+const String kBuildRendezvousServer =
+    String.fromEnvironment('GAMEDESK_SERVER', defaultValue: '');
+const String kBuildRsPubKey =
+    String.fromEnvironment('GAMEDESK_KEY', defaultValue: '');
+
 const String kWindowMainWindowOnTop = "main_window_on_top";
 const String kWindowRefreshCurrentUser = "refresh_current_user";
 const String kWindowGetWindowInfo = "get_window_info";
