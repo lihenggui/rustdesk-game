@@ -1429,10 +1429,10 @@ pub mod window_capture {
     use super::*;
     use scrap::{
         codec::{Encoder, EncoderCfg},
-        common::PixelBuffer,
+        convert_to_yuv,
         dxgi::CapturerWindow,
         vpxcodec::{VpxEncoderConfig, VpxVideoCodecId},
-        EncodeInput, TraitPixelBuffer,
+        EncodeInput, PixelBuffer,
     };
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -1586,7 +1586,7 @@ pub mod window_capture {
             match capturer.frame(&mut pixel_data) {
                 Ok(()) => {
                     let pixelbuffer = PixelBuffer::with_BGRA(&pixel_data, width, height);
-                    scrap::common::convert_to_yuv(
+                    convert_to_yuv(
                         &pixelbuffer,
                         encoder.yuvfmt(),
                         &mut yuv,

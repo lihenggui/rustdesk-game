@@ -3778,7 +3778,6 @@ pub fn find_all_qqsg_windows() -> Vec<QqsgWindowInfo> {
 
 fn get_process_ids_by_name(name: &str) -> Vec<u32> {
     let mut pids = Vec::new();
-    let target: Vec<u16> = name.encode_utf16().collect();
     unsafe {
         let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
             Ok(h) => h,
@@ -3790,17 +3789,14 @@ fn get_process_ids_by_name(name: &str) -> Vec<u32> {
         };
         if Process32FirstW(snapshot, &mut entry).is_ok() {
             loop {
-                let exe_name: Vec<u16> = entry
+                let exe_name_u16: Vec<u16> = entry
                     .szExeFile
                     .iter()
                     .take_while(|&&c| c != 0)
                     .copied()
                     .collect();
-                if exe_name.len() == target.len()
-                    && exe_name
-                        .iter()
-                        .zip(target.iter())
-                        .all(|(a, b)| a.to_ascii_lowercase() == b.to_ascii_lowercase())
+                let exe_name = String::from_utf16_lossy(&exe_name_u16);
+                if exe_name.eq_ignore_ascii_case(name)
                 {
                     pids.push(entry.th32ProcessID);
                 }

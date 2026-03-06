@@ -190,7 +190,7 @@ pub struct CapturerWindow {
 unsafe impl Send for CapturerWindow {}
 
 impl CapturerWindow {
-    pub fn new(hwnd: HWND) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(hwnd: HWND) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         unsafe {
             if hwnd.is_null() {
                 return Err("Null HWND".into());
@@ -271,7 +271,7 @@ impl CapturerWindow {
         }
     }
 
-    pub fn frame(&self, data: &mut Vec<u8>) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn frame(&self, data: &mut Vec<u8>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         unsafe {
             let res = BitBlt(
                 self.dc,
