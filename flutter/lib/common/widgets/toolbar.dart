@@ -307,6 +307,15 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
       onPressed: () => sessionRefreshVideo(sessionId, pi),
     ));
   }
+  // QQSG window capture
+  if (pi.version.isNotEmpty) {
+    v.add(TTextMenu(
+      child: Text('QQSG Windows'),
+      onPressed: () {
+        bind.sessionRequestWindowCapture(sessionId: sessionId, start: true);
+      },
+    ));
+  }
   // record
   if (!(isDesktop || isWeb) &&
       (ffi.recordingModel.start || (perms["recording"] != false))) {

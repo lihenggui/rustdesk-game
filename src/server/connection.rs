@@ -2402,6 +2402,19 @@ impl Connection {
                     if self.is_authed_view_camera_conn() {
                         return true;
                     }
+                    // For window capture displays, translate window-relative coords to screen coords
+                    #[cfg(windows)]
+                    if let Some(hwnd) = video_service::window_capture::get_window_hwnd(self.display_idx) {
+                        use crate::common::input::{MOUSE_TYPE_MASK, MOUSE_TYPE_MOVE_RELATIVE};
+                        let evt_type = me.mask & MOUSE_TYPE_MASK;
+                        // Translate absolute coordinates (move/down/up) but not relative deltas
+                        if evt_type != MOUSE_TYPE_MOVE_RELATIVE {
+                            if let Some((sx, sy)) = crate::platform::windows::window_client_to_screen(hwnd, me.x, me.y) {
+                                me.x = sx;
+                                me.y = sy;
+                            }
+                        }
+                    }
                     #[cfg(any(target_os = "android", target_os = "ios"))]
                     if let Err(e) = call_main_service_pointer_input("mouse", me.mask, me.x, me.y) {
                         log::debug!("call_main_service_pointer_input fail:{}", e);
@@ -3154,6 +3167,10 @@ impl Connection {
                             self.send(msg_out).await;
                         }
                     }
+                    #[cfg(windows)]
+                    Some(misc::Union::WindowCaptureRequest(req)) => {
+                        self.handle_window_capture_request(req).await;
+                    }
                     _ => {}
                 },
                 Some(message::Union::AudioFrame(frame)) => {
@@ -3475,7 +3492,25 @@ impl Connection {
     async fn handle_switch_display(&mut self, s: SwitchDisplay) {
         let display_idx = s.display as usize;
         if self.display_idx != display_idx {
+            // If switching to a window capture display, bring the window to front
+            #[cfg(windows)]
+            if let Some(hwnd) = video_service::window_capture::get_window_hwnd(display_idx) {
+                crate::platform::windows::bring_window_to_front(hwnd);
+            }
+
             if let Some(server) = self.server.upgrade() {
+                // For window capture displays, subscribe to the window service
+                #[cfg(windows)]
+                if video_service::window_capture::is_window_capture(display_idx) {
+                    let service_name = video_service::window_capture::get_window_service_name(display_idx);
+                    let mut lock = server.write().unwrap();
+                    lock.subscribe(&service_name, self.inner.clone(), true);
+                    self.display_idx = display_idx;
+                    drop(lock);
+                } else {
+                    self.switch_display_to(display_idx, server.clone());
+                }
+                #[cfg(not(windows))]
                 self.switch_display_to(display_idx, server.clone());
 
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -3491,16 +3526,91 @@ impl Connection {
                 }
             }
 
-            // Send display changed message.
-            // 1. For compatibility with old versions ( < 1.2.4 ).
-            // 2. Sciter version.
-            // 3. Update `SupportedResolutions`.
+            // Send display changed message (for non-window displays).
+            #[cfg(windows)]
+            if !video_service::window_capture::is_window_capture(self.display_idx) {
+                if let Some(msg_out) =
+                    video_service::make_display_changed_msg(self.display_idx, None, self.video_source())
+                {
+                    self.send(msg_out).await;
+                }
+            }
+            #[cfg(not(windows))]
             if let Some(msg_out) =
                 video_service::make_display_changed_msg(self.display_idx, None, self.video_source())
             {
                 self.send(msg_out).await;
             }
         }
+    }
+
+    #[cfg(windows)]
+    async fn handle_window_capture_request(&mut self, req: WindowCaptureRequest) {
+        use video_service::window_capture;
+
+        if !req.start {
+            // Stop all window captures
+            window_capture::stop_all_window_captures();
+            let mut resp = WindowCaptureResponse::new();
+            resp.success = true;
+            let mut misc = Misc::new();
+            misc.set_window_capture_response(resp);
+            let mut msg = Message::new();
+            msg.set_misc(misc);
+            self.send(msg).await;
+            return;
+        }
+
+        // Find all QQSG windows
+        let qqsg_windows = crate::platform::windows::find_all_qqsg_windows();
+
+        let mut resp = WindowCaptureResponse::new();
+        if qqsg_windows.is_empty() {
+            resp.success = false;
+            resp.error = "No QQSG.exe windows found".to_string();
+        } else {
+            // Stop existing captures first
+            window_capture::stop_all_window_captures();
+
+            // Base index: after physical displays
+            let base_idx = display_service::get_sync_displays().len() + 100; // offset by 100 to avoid collision
+
+            let mut window_infos = Vec::new();
+            if let Some(server) = self.server.upgrade() {
+                for (i, win) in qqsg_windows.iter().enumerate() {
+                    let display_idx = base_idx + i;
+                    let sp = window_capture::start_window_capture(
+                        display_idx,
+                        win.hwnd,
+                        win.title.clone(),
+                        win.width,
+                        win.height,
+                    );
+
+                    // Register service with the server
+                    {
+                        let mut lock = server.write().unwrap();
+                        lock.add_service(Box::new(sp));
+                    }
+
+                    let mut wi = WindowInfo::new();
+                    wi.display_idx = display_idx as i32;
+                    wi.width = win.width;
+                    wi.height = win.height;
+                    wi.window_title = win.title.clone();
+                    window_infos.push(wi);
+                }
+            }
+
+            resp.success = true;
+            resp.windows = window_infos.into();
+        }
+
+        let mut misc = Misc::new();
+        misc.set_window_capture_response(resp);
+        let mut msg = Message::new();
+        msg.set_misc(misc);
+        self.send(msg).await;
     }
 
     fn video_source(&self) -> VideoSource {

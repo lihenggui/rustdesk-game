@@ -1903,6 +1903,22 @@ impl<T: InvokeUiSession> Remote<T> {
                     Some(misc::Union::FollowCurrentDisplay(d_idx)) => {
                         self.handler.set_current_display(d_idx);
                     }
+                    Some(misc::Union::WindowCaptureResponse(resp)) => {
+                        if resp.success {
+                            // Notify Flutter with window list as JSON-like string
+                            let mut parts = Vec::new();
+                            for w in resp.windows.iter() {
+                                parts.push(format!(
+                                    "{}:{}:{}:{}",
+                                    w.display_idx, w.width, w.height, w.window_title
+                                ));
+                            }
+                            let data = parts.join("|");
+                            self.handler.msgbox("window_capture_ok", "Window Capture", &data, "");
+                        } else {
+                            self.handler.msgbox("window_capture_err", "Window Capture", &resp.error, "");
+                        }
+                    }
                     _ => {}
                 },
                 Some(message::Union::TestDelay(t)) => {

@@ -934,6 +934,18 @@ class FfiModel with ChangeNotifier {
       showElevationError(sessionId, type, title, text, dialogManager);
     } else if (type == 'relay-hint' || type == 'relay-hint2') {
       showRelayHintDialog(sessionId, type, title, text, dialogManager, peerId);
+    } else if (type == 'window_capture_ok') {
+      _handleWindowCaptureOk(sessionId, text, dialogManager);
+      return;
+    } else if (type == 'window_capture_err') {
+      dialogManager.show((setState, close, context) {
+        return CustomAlertDialog(
+          title: Text('Window Capture Error'),
+          content: Text(text),
+          actions: [dialogButton('OK', onPressed: close)],
+        );
+      });
+      return;
     } else if (text == kMsgboxTextWaitingForImage) {
       showConnectedWaitingForImage(dialogManager, sessionId, type, title, text);
     } else if (title == 'Privacy mode') {
@@ -1051,6 +1063,55 @@ class FfiModel with ChangeNotifier {
     dialogManager.dismissAll();
     dialogManager.showLoading(translate('Connecting...'),
         onCancel: closeConnection);
+  }
+
+  void _handleWindowCaptureOk(
+      SessionID sessionId, String data, OverlayDialogManager dialogManager) {
+    // data format: "display_idx:width:height:title|display_idx:width:height:title|..."
+    if (data.isEmpty) return;
+    final windows = data.split('|').map((w) {
+      final parts = w.split(':');
+      if (parts.length >= 4) {
+        return {
+          'display_idx': int.tryParse(parts[0]) ?? 0,
+          'width': int.tryParse(parts[1]) ?? 0,
+          'height': int.tryParse(parts[2]) ?? 0,
+          'title': parts.sublist(3).join(':'),
+        };
+      }
+      return null;
+    }).where((w) => w != null).toList();
+
+    if (windows.isEmpty) return;
+
+    dialogManager.show((setState, close, context) {
+      return CustomAlertDialog(
+        title: Text('QQSG Windows (${windows.length})'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: windows.map((w) {
+            final idx = w!['display_idx'] as int;
+            final title = w['title'] as String;
+            final width = w['width'] as int;
+            final height = w['height'] as int;
+            return ListTile(
+              title: Text(title),
+              subtitle: Text('${width}x$height'),
+              onTap: () {
+                close();
+                bind.sessionSwitchDisplay(
+                    isDesktop: isDesktop,
+                    sessionId: sessionId,
+                    value: Int32List.fromList([idx]));
+              },
+            );
+          }).toList(),
+        ),
+        actions: [
+          dialogButton('Close', onPressed: close),
+        ],
+      );
+    });
   }
 
   Future<void> showRelayHintDialog(

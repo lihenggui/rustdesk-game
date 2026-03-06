@@ -174,6 +174,11 @@ class RustdeskImpl {
     return Future(() => js.context.callMethod('setByName', ['session_close']));
   }
 
+  Future<void> sessionRequestWindowCapture(
+      {required UuidValue sessionId, required bool start, dynamic hint}) {
+    throw UnimplementedError("sessionRequestWindowCapture");
+  }
+
   Future<void> sessionRefresh(
       {required UuidValue sessionId, required int display, dynamic hint}) {
     return Future(() => js.context.callMethod('setByName', ['refresh']));

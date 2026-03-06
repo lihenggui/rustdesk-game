@@ -3702,6 +3702,150 @@ pub(super) fn get_pids_with_first_arg_by_wmic<S1: AsRef<str>, S2: AsRef<str>>(
         .unwrap_or_default()
 }
 
+// QQSG.exe window capture utilities
+
+pub struct QqsgWindowInfo {
+    pub hwnd: usize, // HWND as usize for Send safety
+    pub title: String,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Find all visible QQSG.exe windows. Returns list of window info.
+pub fn find_all_qqsg_windows() -> Vec<QqsgWindowInfo> {
+    let target_name = "QQSG.exe";
+    let pids = get_process_ids_by_name(target_name);
+    if pids.is_empty() {
+        return Vec::new();
+    }
+
+    let mut results = Vec::new();
+    unsafe {
+        struct EnumCtx {
+            pids: Vec<u32>,
+            results: Vec<QqsgWindowInfo>,
+        }
+
+        unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let ctx = &mut *(lparam as *mut EnumCtx);
+            if IsWindowVisible(hwnd) == 0 {
+                return TRUE;
+            }
+            let mut pid: u32 = 0;
+            GetWindowThreadProcessId(hwnd, &mut pid);
+            if !ctx.pids.contains(&pid) {
+                return TRUE;
+            }
+            let mut rect: RECT = mem::zeroed();
+            if GetClientRect(hwnd, &mut rect) == 0 {
+                return TRUE;
+            }
+            let w = rect.right - rect.left;
+            let h = rect.bottom - rect.top;
+            if w <= 0 || h <= 0 {
+                return TRUE;
+            }
+            // Get window title
+            let mut title_buf = [0u16; 512];
+            let len = GetWindowTextW(hwnd, title_buf.as_mut_ptr(), title_buf.len() as i32);
+            let title = if len > 0 {
+                String::from_utf16_lossy(&title_buf[..len as usize])
+            } else {
+                String::new()
+            };
+            // Skip windows with no title (likely invisible helper windows)
+            if title.is_empty() {
+                return TRUE;
+            }
+            ctx.results.push(QqsgWindowInfo {
+                hwnd: hwnd as usize,
+                title,
+                width: w,
+                height: h,
+            });
+            TRUE
+        }
+
+        let mut ctx = EnumCtx {
+            pids,
+            results: Vec::new(),
+        };
+        EnumWindows(Some(enum_callback), &mut ctx as *mut EnumCtx as LPARAM);
+        results = ctx.results;
+    }
+    results
+}
+
+fn get_process_ids_by_name(name: &str) -> Vec<u32> {
+    let mut pids = Vec::new();
+    let target: Vec<u16> = name.encode_utf16().collect();
+    unsafe {
+        let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
+            Ok(h) => h,
+            Err(_) => return pids,
+        };
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..std::mem::zeroed()
+        };
+        if Process32FirstW(snapshot, &mut entry).is_ok() {
+            loop {
+                let exe_name: Vec<u16> = entry
+                    .szExeFile
+                    .iter()
+                    .take_while(|&&c| c != 0)
+                    .copied()
+                    .collect();
+                if exe_name.len() == target.len()
+                    && exe_name
+                        .iter()
+                        .zip(target.iter())
+                        .all(|(a, b)| a.to_ascii_lowercase() == b.to_ascii_lowercase())
+                {
+                    pids.push(entry.th32ProcessID);
+                }
+                if Process32NextW(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = WinCloseHandle(snapshot);
+    }
+    pids
+}
+
+/// Bring window to foreground
+pub fn bring_window_to_front(hwnd: usize) -> bool {
+    unsafe {
+        let hwnd = hwnd as HWND;
+        if IsWindow(hwnd) == 0 {
+            return false;
+        }
+        // If minimized, restore it
+        if IsIconic(hwnd) != 0 {
+            ShowWindow(hwnd, SW_RESTORE);
+        }
+        SetForegroundWindow(hwnd) != 0
+    }
+}
+
+/// Check if a window handle is still valid
+pub fn is_window_valid(hwnd: usize) -> bool {
+    unsafe { IsWindow(hwnd as HWND) != 0 }
+}
+
+/// Convert window client coordinates to screen coordinates
+pub fn window_client_to_screen(hwnd: usize, x: i32, y: i32) -> Option<(i32, i32)> {
+    unsafe {
+        let mut pt = POINT { x, y };
+        if ClientToScreen(hwnd as HWND, &mut pt) != 0 {
+            Some((pt.x, pt.y))
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
