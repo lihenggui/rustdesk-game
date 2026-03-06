@@ -61,13 +61,14 @@ const List<_Btn> _kQwertyRow = [
   _Btn('T', 't'),
 ];
 
-/// Middle shortcut row – ASDFG keys (affected by Alt lock).
+/// Middle shortcut row – ASDFG keys (affected by Alt lock) + Enter.
 const List<_Btn> _kAsdfRow = [
   _Btn('A', 'a'),
   _Btn('S', 's'),
   _Btn('D', 'd'),
   _Btn('F', 'f'),
   _Btn('G', 'g'),
+  _Btn('↵', 'VK_RETURN'),
 ];
 
 // ── Public widget ────────────────────────────────────────────────────────────
@@ -125,14 +126,18 @@ class _GamepadButtonsState extends State<GamepadButtons> {
           (screenWidth - _kJoystickReserved).clamp(100.0, double.infinity);
 
       // Derive button radii so all rows fit inside `available`.
-      // The top row (number row + 4dp gap + alt badge) is the widest constraint.
+      // Take the tightest constraint among all small-button rows.
       const smallGap = 3.0;
       const largeGap = 5.0;
       const altPadding = 4.0 + _kAltLockSize; // gap + badge
-      final smallRadius =
-          ((available - (_kNumberRow.length - 1) * smallGap - altPadding) /
-                  (_kNumberRow.length * 2))
-              .clamp(8.0, _kSmallRadius);
+      final rNumber =
+          (available - (_kNumberRow.length - 1) * smallGap - altPadding) /
+              (_kNumberRow.length * 2);
+      final rAsdf =
+          (available - (_kAsdfRow.length - 1) * smallGap) /
+              (_kAsdfRow.length * 2);
+      final smallRadius = (rNumber < rAsdf ? rNumber : rAsdf)
+          .clamp(8.0, _kSmallRadius);
       final largeRadius =
           ((available - (_kLargeRow.length - 1) * largeGap) /
                   (_kLargeRow.length * 2))
