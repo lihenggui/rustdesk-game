@@ -12,11 +12,13 @@ on:
   workflow_dispatch:
     inputs:
       upload-artifact:
-        description: 'Upload artifact? use "true" or "false" (string)'
+        description: 'Upload artifact?'
+        type: boolean
         required: false
-        default: 'true'
+        default: true
       upload-tag:
         description: 'Tag name for upload'
+        type: string
         required: false
         default: 'nightly'
 
@@ -69,8 +71,6 @@ jobs:
       configuration: Release
       platform: x64
       target_version: Windows10
-    strategy:
-      fail-fast: false
 
   build-for-windows-flutter:
     name: ${{ matrix.job.target }}
