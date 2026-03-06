@@ -1536,7 +1536,7 @@ pub mod window_capture {
     ) -> ResultType<()> {
         log::info!("Starting window capture for display_idx={}, hwnd={:#x}", display_idx, hwnd);
 
-        let capturer = CapturerWindow::new(hwnd as _)?;
+        let capturer = CapturerWindow::new(hwnd as _).map_err(|e| anyhow::anyhow!("{}", e))?;
         let width = capturer.width() as usize;
         let height = capturer.height() as usize;
 
