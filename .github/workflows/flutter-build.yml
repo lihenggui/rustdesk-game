@@ -174,8 +174,11 @@ jobs:
         shell: bash
 
       - name: Build rustdesk
+        env:
+          GAMEDESK_SERVER: ${{ secrets.GAMEDESK_SERVER }}
+          GAMEDESK_KEY: ${{ secrets.GAMEDESK_KEY }}
         run: |
-          # Windows: build RustDesk
+          # Windows: build GameDesk
           python3 .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
           mv ./flutter/build/windows/x64/runner/Release ./rustdesk
 
@@ -726,6 +729,9 @@ jobs:
           rustc -V
 
       - name: Build rustdesk
+        env:
+          GAMEDESK_SERVER: ${{ secrets.GAMEDESK_SERVER }}
+          GAMEDESK_KEY: ${{ secrets.GAMEDESK_KEY }}
         run: |
           if [ "${{ matrix.job.target }}" = "aarch64-apple-darwin" ]; then
             MIN_MACOS_VERSION="12.3"
@@ -1440,6 +1446,9 @@ jobs:
           arch: ${{ matrix.job.arch }}
           distro: ${{ matrix.job.distro }}
           githubToken: ${{ github.token }}
+          env: |
+            GAMEDESK_SERVER: ${{ secrets.GAMEDESK_SERVER }}
+            GAMEDESK_KEY: ${{ secrets.GAMEDESK_KEY }}
           setup: |
             ls -l "${PWD}"
             ls -l /opt/artifacts/vcpkg/installed

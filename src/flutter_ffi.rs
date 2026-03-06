@@ -82,6 +82,9 @@ fn initialize(app_dir: &str, custom_client_config: &str) {
     {
         // core_main's init_log does not work for flutter since it is only applied to its load_library in main.c
         hbb_common::init_log(false, "flutter_ffi");
+        crate::common::apply_build_time_server_config();
+        crate::common::test_rendezvous_server();
+        crate::common::test_nat_type();
     }
 }
 
