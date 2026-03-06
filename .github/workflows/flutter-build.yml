@@ -1446,15 +1446,14 @@ jobs:
           arch: ${{ matrix.job.arch }}
           distro: ${{ matrix.job.distro }}
           githubToken: ${{ github.token }}
-          env: |
-            GAMEDESK_SERVER: ${{ secrets.GAMEDESK_SERVER }}
-            GAMEDESK_KEY: ${{ secrets.GAMEDESK_KEY }}
           setup: |
             ls -l "${PWD}"
             ls -l /opt/artifacts/vcpkg/installed
           dockerRunArgs: |
             --volume "${PWD}:/workspace"
             --volume "/opt/artifacts:/opt/artifacts"
+            -e GAMEDESK_SERVER="${{ secrets.GAMEDESK_SERVER }}"
+            -e GAMEDESK_KEY="${{ secrets.GAMEDESK_KEY }}"
           shell: /bin/bash
           install: |
             apt-get update -y
