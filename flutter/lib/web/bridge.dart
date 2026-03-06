@@ -2039,5 +2039,9 @@ class GamedeskImpl {
     return false;
   }
 
+  String mainResolveAvatarUrl({required String avatar, dynamic hint}) {
+    return js.context.callMethod('getByName', ['resolve_avatar_url', avatar])?.toString() ?? avatar;
+  }
+
   void dispose() {}
 }
