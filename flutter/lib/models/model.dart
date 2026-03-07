@@ -845,11 +845,9 @@ class FfiModel with ChangeNotifier {
             evt['original_height'] ?? kInvalidResolutionValue.toString()) ??
         kInvalidResolutionValue;
     newDisplay._scale = _pi.scaleOfDisplay(display);
-    // Extend displays list if needed for window capture virtual indices
-    while (_pi.displays.length <= display) {
-      _pi.displays.add(Display());
+    if (display >= 0 && display < _pi.displays.length) {
+      _pi.displays[display] = newDisplay;
     }
-    _pi.displays[display] = newDisplay;
 
     if (!_pi.isSupportMultiUiSession || _pi.currentDisplay == display) {
       updateCurDisplay(sessionId);
@@ -4043,6 +4041,8 @@ class PeerInfo with ChangeNotifier {
 
   /// Window capture virtual displays: display_idx -> {title, width, height}
   RxMap<int, Map<String, dynamic>> windowCaptures = <int, Map<String, dynamic>>{}.obs;
+  /// Tracks which window capture virtual index is active (-1 = none).
+  RxInt activeWindowCapture = RxInt(-1);
 
   bool get isWayland => platformAdditions[kPlatformAdditionsIsWayland] == true;
   bool get isHeadless => platformAdditions[kPlatformAdditionsHeadless] == true;

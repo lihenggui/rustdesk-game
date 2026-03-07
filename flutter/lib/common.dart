@@ -3314,16 +3314,31 @@ Future<List<Rect>> getScreenRectList() async {
 
 openMonitorInTheSameTab(int i, FFI ffi, PeerInfo pi,
     {bool updateCursorPos = true}) {
+  // Window capture virtual display (index >= 100)
+  if (i >= 100) {
+    pi.activeWindowCapture.value = i;
+    if (pi.forceTextureRender) {
+      ffi.imageModel.clearImage();
+    }
+    // Send switch request to server; server will respond with SwitchDisplay
+    // using the original monitor index (0) but with window dimensions
+    bind.sessionSwitchDisplay(
+      isDesktop: isDesktop,
+      sessionId: ffi.sessionId,
+      value: Int32List.fromList([i]),
+    );
+    // Don't call switchToNewDisplay — the server will send back a
+    // SwitchDisplay with display=0 which handleSwitchDisplay will process
+    return;
+  }
+
+  // Normal monitor switch — clear window capture state
+  pi.activeWindowCapture.value = -1;
+
   final displays = i == kAllDisplayValue
       ? List.generate(pi.displays.length, (index) => index)
       : [i];
   // Try clear image model before switching from all displays
-  // 1. The remote side has multiple displays.
-  // 2. Do not use texture render.
-  // 3. Connect to Display 1.
-  // 4. Switch to multi-displays `kAllDisplayValue`
-  // 5. Switch to Display 2.
-  // Then the remote page will display last picture of Display 1 at the beginning.
   if (pi.forceTextureRender && i != kAllDisplayValue) {
     ffi.imageModel.clearImage();
   }

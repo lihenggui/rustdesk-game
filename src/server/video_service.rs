@@ -1775,7 +1775,9 @@ pub mod window_capture {
                     match encoder.encode_to_message(EncodeInput::YUV(&yuv), ms) {
                         Ok(mut vf) => {
                             encode_fail_counter = 0;
-                            vf.display = display_idx as _;
+                            // Use display 0 so the client's existing renderer handles the frame.
+                            // The virtual display index (101+) is only for server-side routing.
+                            vf.display = 0;
                             let mut msg = Message::new();
                             msg.set_video_frame(vf);
                             sp.send_video_frame(msg);

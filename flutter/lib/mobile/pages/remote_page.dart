@@ -1196,7 +1196,7 @@ void showOptions(
     for (var i = 0; i < pi.displays.length; ++i) {
       children.add(InkWell(
           onTap: () {
-            if (i == cur) return;
+            if (i == cur && pi.activeWindowCapture.value < 0) return;
             openMonitorInTheSameTab(i, gFFI, pi);
             gFFI.dialogManager.dismissAll();
           },
@@ -1216,13 +1216,15 @@ void showOptions(
     }
     // Add window capture buttons
     var sgIndex = 1;
+    final activeWc = pi.activeWindowCapture.value;
     for (final entry in pi.windowCaptures.entries) {
       final displayIdx = entry.key;
       final label = 'SG$sgIndex';
       sgIndex++;
+      final isActive = displayIdx == activeWc;
       children.add(InkWell(
         onTap: () {
-          if (displayIdx == cur) return;
+          if (isActive) return;
           openMonitorInTheSameTab(displayIdx, gFFI, pi);
           gFFI.dialogManager.dismissAll();
         },
@@ -1232,13 +1234,13 @@ void showOptions(
           decoration: BoxDecoration(
             border: Border.all(color: Theme.of(context).hintColor),
             borderRadius: BorderRadius.circular(2),
-            color: displayIdx == cur ? numBgSelected : null,
+            color: isActive ? numBgSelected : null,
           ),
           child: Center(
             child: Text(
               label,
               style: TextStyle(
-                color: displayIdx == cur ? numColorSelected : numColorUnselected,
+                color: isActive ? numColorSelected : numColorUnselected,
                 fontSize: 11,
               ),
             ),

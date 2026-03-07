@@ -655,16 +655,16 @@ class _MonitorMenu extends StatelessWidget {
       final label = 'SG$sgIndex';
       sgIndex++;
       monitorList.add(Obx(() {
-        RxInt display = CurrentDisplayState.find(id);
+        final activeWc = ffi.ffiModel.pi.activeWindowCapture.value;
         return _IconMenuButton(
           tooltip: isMulti ? '' : label,
           hMargin: isMulti ? null : 6,
           vMargin: isMulti ? null : 12,
           topLevel: false,
-          color: displayIdx == display.value
+          color: displayIdx == activeWc
               ? _ToolbarTheme.blueColor
               : _ToolbarTheme.inactiveColor,
-          hoverColor: displayIdx == display.value
+          hoverColor: displayIdx == activeWc
               ? _ToolbarTheme.hoverBlueColor
               : _ToolbarTheme.hoverInactiveColor,
           icon: Container(
@@ -765,8 +765,9 @@ class _MonitorMenu extends StatelessWidget {
       _menuDismissCallback(ffi);
     }
     RxInt display = CurrentDisplayState.find(id);
-    if (display.value != i) {
-      final isChooseDisplayToOpenInNewWindow = pi.isSupportMultiDisplay &&
+    // Also switch if a window capture is active (even if display index matches)
+    if (display.value != i || (i < 100 && pi.activeWindowCapture.value >= 0) || (i >= 100 && pi.activeWindowCapture.value != i)) {
+      final isChooseDisplayToOpenInNewWindow = i < 100 && pi.isSupportMultiDisplay &&
           bind.sessionGetDisplaysAsIndividualWindows(
                   sessionId: ffi.sessionId) ==
               'Y';
