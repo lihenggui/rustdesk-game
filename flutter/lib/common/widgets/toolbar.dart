@@ -310,13 +310,11 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
   // QQSG window capture toggle
   if (pi.version.isNotEmpty) {
     final isActive = pi.windowCaptures.isNotEmpty;
-    v.add(TToggleMenu(
-      value: isActive,
-      onChanged: (value) {
-        if (value == null) return;
-        bind.sessionRequestWindowCapture(sessionId: sessionId, start: value);
+    v.add(TTextMenu(
+      child: Text(isActive ? 'Stop QQSG Capture' : 'Start QQSG Capture'),
+      onPressed: () {
+        bind.sessionRequestWindowCapture(sessionId: sessionId, start: !isActive);
       },
-      child: Text('QQSG Window Capture'),
     ));
   }
   // record
