@@ -1182,7 +1182,7 @@ void showOptions(
   if (image != null) {
     displays.add(Padding(padding: const EdgeInsets.only(top: 8), child: image));
   }
-  if (pi.displays.length > 1 && pi.currentDisplay != kAllDisplayValue) {
+  if ((pi.displays.length > 1 || pi.windowCaptures.isNotEmpty) && pi.currentDisplay != kAllDisplayValue) {
     final cur = pi.currentDisplay;
     final children = <Widget>[];
     final isDarkTheme = MyTheme.currentThemeMode() == ThemeMode.dark;
@@ -1213,6 +1213,36 @@ void showOptions(
                           color:
                               i == cur ? numColorSelected : numColorUnselected,
                           fontWeight: FontWeight.bold))))));
+    }
+    // Add window capture buttons
+    for (final entry in pi.windowCaptures.entries) {
+      final displayIdx = entry.key;
+      final title = entry.value['title'] as String? ?? 'Window';
+      children.add(InkWell(
+        onTap: () {
+          if (displayIdx == cur) return;
+          openMonitorInTheSameTab(displayIdx, gFFI, pi);
+          gFFI.dialogManager.dismissAll();
+        },
+        child: Ink(
+          height: 40,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).hintColor),
+            borderRadius: BorderRadius.circular(2),
+            color: displayIdx == cur ? numBgSelected : null,
+          ),
+          child: Center(
+            child: Text(
+              title.length > 6 ? '${title.substring(0, 6)}..' : title,
+              style: TextStyle(
+                color: displayIdx == cur ? numColorSelected : numColorUnselected,
+                fontSize: 11,
+              ),
+            ),
+          ),
+        ),
+      ));
     }
     displays.add(Padding(
         padding: const EdgeInsets.only(top: 8),

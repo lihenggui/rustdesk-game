@@ -845,6 +845,10 @@ class FfiModel with ChangeNotifier {
             evt['original_height'] ?? kInvalidResolutionValue.toString()) ??
         kInvalidResolutionValue;
     newDisplay._scale = _pi.scaleOfDisplay(display);
+    // Extend displays list if needed for window capture virtual indices
+    while (_pi.displays.length <= display) {
+      _pi.displays.add(Display());
+    }
     _pi.displays[display] = newDisplay;
 
     if (!_pi.isSupportMultiUiSession || _pi.currentDisplay == display) {
@@ -1067,51 +1071,25 @@ class FfiModel with ChangeNotifier {
 
   void _handleWindowCaptureOk(
       SessionID sessionId, String data, OverlayDialogManager dialogManager) {
-    // data format: "display_idx:width:height:title|display_idx:width:height:title|..."
-    if (data.isEmpty) return;
-    final windows = data.split('|').map((w) {
+    if (data.isEmpty) {
+      _pi.windowCaptures.clear();
+      return;
+    }
+    final windows = <int, Map<String, dynamic>>{};
+    for (final w in data.split('|')) {
       final parts = w.split(':');
       if (parts.length >= 4) {
-        return {
-          'display_idx': int.tryParse(parts[0]) ?? 0,
+        final idx = int.tryParse(parts[0]) ?? 0;
+        windows[idx] = {
+          'display_idx': idx,
           'width': int.tryParse(parts[1]) ?? 0,
           'height': int.tryParse(parts[2]) ?? 0,
           'title': parts.sublist(3).join(':'),
         };
       }
-      return null;
-    }).where((w) => w != null).toList();
-
-    if (windows.isEmpty) return;
-
-    dialogManager.show((setState, close, context) {
-      return CustomAlertDialog(
-        title: Text('QQSG Windows (${windows.length})'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: windows.map((w) {
-            final idx = w!['display_idx'] as int;
-            final title = w['title'] as String;
-            final width = w['width'] as int;
-            final height = w['height'] as int;
-            return ListTile(
-              title: Text(title),
-              subtitle: Text('${width}x$height'),
-              onTap: () {
-                close();
-                bind.sessionSwitchDisplay(
-                    isDesktop: isDesktop,
-                    sessionId: sessionId,
-                    value: Int32List.fromList([idx]));
-              },
-            );
-          }).toList(),
-        ),
-        actions: [
-          dialogButton('Close', onPressed: close),
-        ],
-      );
-    });
+    }
+    _pi.windowCaptures.value = windows;
+    notifyListeners();
   }
 
   Future<void> showRelayHintDialog(
@@ -4062,6 +4040,9 @@ class PeerInfo with ChangeNotifier {
 
   RxInt displaysCount = 0.obs;
   RxBool isSet = false.obs;
+
+  /// Window capture virtual displays: display_idx -> {title, width, height}
+  RxMap<int, Map<String, dynamic>> windowCaptures = <int, Map<String, dynamic>>{}.obs;
 
   bool get isWayland => platformAdditions[kPlatformAdditionsIsWayland] == true;
   bool get isHeadless => platformAdditions[kPlatformAdditionsHeadless] == true;

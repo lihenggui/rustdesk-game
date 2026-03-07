@@ -531,7 +531,7 @@ class _MonitorMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => showMonitorsToolbar
-      ? buildMultiMonitorMenu(context)
+      ? Obx(() => buildMultiMonitorMenu(context))
       : Obx(() => buildMonitorMenu(context));
 
   Widget buildMonitorMenu(BuildContext context) {
@@ -646,6 +646,47 @@ class _MonitorMenu extends StatelessWidget {
 
     for (int i = 0; i < pi.displays.length; i++) {
       monitorList.add(buildMonitorButton(i));
+    }
+    // Add window capture virtual displays
+    final windowCaptures = ffi.ffiModel.pi.windowCaptures;
+    for (final entry in windowCaptures.entries) {
+      final displayIdx = entry.key;
+      final title = entry.value['title'] as String? ?? 'Window';
+      monitorList.add(Obx(() {
+        RxInt display = CurrentDisplayState.find(id);
+        return _IconMenuButton(
+          tooltip: isMulti ? '' : '[QQSG] $title',
+          hMargin: isMulti ? null : 6,
+          vMargin: isMulti ? null : 12,
+          topLevel: false,
+          color: displayIdx == display.value
+              ? _ToolbarTheme.blueColor
+              : _ToolbarTheme.inactiveColor,
+          hoverColor: displayIdx == display.value
+              ? _ToolbarTheme.hoverBlueColor
+              : _ToolbarTheme.hoverInactiveColor,
+          icon: Container(
+            alignment: AlignmentDirectional.center,
+            constraints: const BoxConstraints(minHeight: _ToolbarTheme.height),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.videogame_asset, size: 16, color: Colors.white),
+                const SizedBox(width: 2),
+                Text(
+                  title.length > 8 ? '${title.substring(0, 8)}...' : title,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          onPressed: () => onPressed(displayIdx, pi, isMulti),
+        );
+      }));
     }
     if (supportIndividualWindows && pi.displays.length > 1) {
       monitorList.add(buildMonitorButton(kAllDisplayValue));

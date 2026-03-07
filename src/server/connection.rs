@@ -296,6 +296,8 @@ pub struct Connection {
     cm_read_job_ids: HashSet<i32>,
     terminal_service_id: String,
     terminal_persistent: bool,
+    #[cfg(windows)]
+    window_capture_rx: Option<mpsc::UnboundedReceiver<video_service::window_capture::ScannerEvent>>,
     // The user token must be set when terminal is enabled.
     // 0 indicates SYSTEM user
     // other values indicate current user
@@ -476,6 +478,8 @@ impl Connection {
             cm_read_job_ids: HashSet::new(),
             terminal_service_id: "".to_owned(),
             terminal_persistent: false,
+            #[cfg(windows)]
+            window_capture_rx: None,
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             terminal_user_token: None,
             terminal_generic_service: None,
@@ -920,6 +924,8 @@ impl Connection {
                     conn.file_remove_log_control.on_timer().drain(..).map(|x| conn.send_to_cm(x)).count();
                     #[cfg(feature = "hwcodec")]
                     conn.update_supported_encoding();
+                    #[cfg(windows)]
+                    conn.handle_window_capture_scanner_events().await;
                 }
                 _ = test_delay_timer.tick() => {
                     if last_recv_time.elapsed() >= SEC30 {
@@ -961,6 +967,14 @@ impl Connection {
         #[cfg(feature = "unix-file-copy-paste")]
         {
             conn.try_empty_file_clipboard();
+        }
+
+        // Stop window capture scanner and all captures only if this connection owns them
+        #[cfg(windows)]
+        if conn.window_capture_rx.is_some() {
+            video_service::window_capture::stop_scanner();
+            video_service::window_capture::stop_all_window_captures();
+            conn.window_capture_rx = None;
         }
 
         if let Some(video_privacy_conn_id) = privacy_mode::get_privacy_mode_conn_id() {
@@ -3551,6 +3565,15 @@ impl Connection {
                 if video_service::window_capture::is_window_capture(display_idx) {
                     let service_name = video_service::window_capture::get_window_service_name(display_idx);
                     let mut lock = server.write().unwrap();
+
+                    // Unsubscribe from old service first
+                    let old_service_name = if video_service::window_capture::is_window_capture(self.display_idx) {
+                        video_service::window_capture::get_window_service_name(self.display_idx)
+                    } else {
+                        video_service::get_service_name(self.video_source(), self.display_idx)
+                    };
+                    lock.subscribe(&old_service_name, self.inner.clone(), false);
+
                     lock.subscribe(&service_name, self.inner.clone(), true);
                     self.display_idx = display_idx;
                     drop(lock);
@@ -3573,10 +3596,27 @@ impl Connection {
                 }
             }
 
-            // Send display changed message (for non-window displays).
+            // Send display changed message.
             #[cfg(windows)]
-            if !video_service::window_capture::is_window_capture(self.display_idx) {
-                if let Some(msg_out) =
+            {
+                if video_service::window_capture::is_window_capture(self.display_idx) {
+                    // For window captures, construct SwitchDisplay from window dimensions
+                    if let Some((width, height)) = video_service::window_capture::get_window_dimensions(self.display_idx) {
+                        let mut misc = Misc::new();
+                        misc.set_switch_display(SwitchDisplay {
+                            display: self.display_idx as i32,
+                            x: 0,
+                            y: 0,
+                            width,
+                            height,
+                            cursor_embedded: false,
+                            ..Default::default()
+                        });
+                        let mut msg_out = Message::new();
+                        msg_out.set_misc(misc);
+                        self.send(msg_out).await;
+                    }
+                } else if let Some(msg_out) =
                     video_service::make_display_changed_msg(self.display_idx, None, self.video_source())
                 {
                     self.send(msg_out).await;
@@ -3596,10 +3636,14 @@ impl Connection {
         use video_service::window_capture;
 
         if !req.start {
-            // Stop all window captures
+            // Stop scanner and all window captures
+            window_capture::stop_scanner();
             window_capture::stop_all_window_captures();
+            self.window_capture_rx = None;
+
             let mut resp = WindowCaptureResponse::new();
             resp.success = true;
+            // Send empty windows list to indicate all captures stopped
             let mut misc = Misc::new();
             misc.set_window_capture_response(resp);
             let mut msg = Message::new();
@@ -3617,6 +3661,7 @@ impl Connection {
             resp.error = "No QQSG.exe windows found".to_string();
         } else {
             // Stop existing captures first
+            window_capture::stop_scanner();
             window_capture::stop_all_window_captures();
 
             // Base index: after physical displays
@@ -3647,6 +3692,19 @@ impl Connection {
                     wi.window_title = win.title.clone();
                     window_infos.push(wi);
                 }
+
+                // Start the scanner thread with an mpsc channel for events
+                let (tx_scanner, rx_scanner) =
+                    mpsc::unbounded_channel::<window_capture::ScannerEvent>();
+                self.window_capture_rx = Some(rx_scanner);
+
+                let server_weak = self.server.clone();
+                window_capture::start_scanner(
+                    server_weak,
+                    Box::new(move |event| {
+                        let _ = tx_scanner.send(event);
+                    }),
+                );
             }
 
             resp.success = true;
@@ -3658,6 +3716,79 @@ impl Connection {
         let mut msg = Message::new();
         msg.set_misc(misc);
         self.send(msg).await;
+    }
+
+    #[cfg(windows)]
+    async fn handle_window_capture_scanner_events(&mut self) {
+        use video_service::window_capture;
+
+        // Collect all pending events first, then drop the borrow on self.window_capture_rx
+        let events: Vec<_> = match self.window_capture_rx.as_mut() {
+            Some(rx) => {
+                let mut evts = Vec::new();
+                while let Ok(event) = rx.try_recv() {
+                    evts.push(event);
+                }
+                evts
+            }
+            None => return,
+        };
+
+        // Now process collected events without holding a borrow on self.window_capture_rx
+        for event in events {
+            match event {
+                window_capture::ScannerEvent::WindowsChanged(infos) => {
+                    let mut resp = WindowCaptureResponse::new();
+                    resp.success = true;
+                    resp.windows = infos
+                        .iter()
+                        .map(|info| {
+                            let mut wi = WindowInfo::new();
+                            wi.display_idx = info.display_idx as i32;
+                            wi.width = info.width;
+                            wi.height = info.height;
+                            wi.window_title = info.title.clone();
+                            wi
+                        })
+                        .collect::<Vec<_>>()
+                        .into();
+                    let mut misc = Misc::new();
+                    misc.set_window_capture_response(resp);
+                    let mut msg = Message::new();
+                    msg.set_misc(misc);
+                    self.send(msg).await;
+                }
+                window_capture::ScannerEvent::ViewedWindowClosed(closed_idx) => {
+                    if self.display_idx == closed_idx {
+                        // Switch back to primary display
+                        log::info!(
+                            "Viewed window display_idx={} was closed, switching to primary display",
+                            closed_idx
+                        );
+                        let primary_idx = *display_service::PRIMARY_DISPLAY_IDX;
+                        if let Some(server) = self.server.upgrade() {
+                            // Unsubscribe from the window capture service first
+                            let old_service_name = window_capture::get_window_service_name(closed_idx);
+                            {
+                                let mut lock = server.write().unwrap();
+                                lock.subscribe(&old_service_name, self.inner.clone(), false);
+                            }
+
+                            self.switch_display_to(primary_idx, server.clone());
+
+                            // Send SwitchDisplay message to client
+                            if let Some(msg_out) = video_service::make_display_changed_msg(
+                                primary_idx,
+                                None,
+                                self.video_source(),
+                            ) {
+                                self.send(msg_out).await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn video_source(&self) -> VideoSource {

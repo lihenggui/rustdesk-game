@@ -4388,6 +4388,11 @@ pub fn is_window_valid(hwnd: usize) -> bool {
     unsafe { IsWindow(hwnd as HWND) != 0 }
 }
 
+/// Check if a window is minimized (iconic)
+pub fn is_window_minimized(hwnd: usize) -> bool {
+    unsafe { IsIconic(hwnd as HWND) != 0 }
+}
+
 /// Convert window client coordinates to screen coordinates
 pub fn window_client_to_screen(hwnd: usize, x: i32, y: i32) -> Option<(i32, i32)> {
     unsafe {

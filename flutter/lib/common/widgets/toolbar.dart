@@ -307,12 +307,13 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
       onPressed: () => sessionRefreshVideo(sessionId, pi),
     ));
   }
-  // QQSG window capture
+  // QQSG window capture toggle
   if (pi.version.isNotEmpty) {
+    final isActive = pi.windowCaptures.isNotEmpty;
     v.add(TTextMenu(
-      child: Text('QQSG Windows'),
+      child: Text(isActive ? 'Stop QQSG Capture' : 'Start QQSG Capture'),
       onPressed: () {
-        bind.sessionRequestWindowCapture(sessionId: sessionId, start: true);
+        bind.sessionRequestWindowCapture(sessionId: sessionId, start: !isActive);
       },
     ));
   }
