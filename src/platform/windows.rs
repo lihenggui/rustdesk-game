@@ -46,8 +46,9 @@ use winapi::{
         },
         minwinbase::STILL_ACTIVE,
         processthreadsapi::{
-            GetCurrentProcess, GetCurrentProcessId, GetExitCodeProcess, OpenProcess,
-            OpenProcessToken, ProcessIdToSessionId, PROCESS_INFORMATION, STARTUPINFOW,
+            GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, GetExitCodeProcess,
+            OpenProcess, OpenProcessToken, ProcessIdToSessionId, PROCESS_INFORMATION,
+            STARTUPINFOW,
         },
         securitybaseapi::{
             AllocateAndInitializeSid, DuplicateToken, EqualSid, FreeSid, GetTokenInformation,
@@ -4368,7 +4369,9 @@ fn get_process_ids_by_name(name: &str) -> Vec<u32> {
     pids
 }
 
-/// Bring window to foreground
+/// Bring window to foreground.
+/// Uses AttachThreadInput trick to bypass Windows' foreground lock when called
+/// from a background/service process.
 pub fn bring_window_to_front(hwnd: usize) -> bool {
     unsafe {
         let hwnd = hwnd as HWND;
@@ -4379,7 +4382,28 @@ pub fn bring_window_to_front(hwnd: usize) -> bool {
         if IsIconic(hwnd) != 0 {
             ShowWindow(hwnd, SW_RESTORE);
         }
-        SetForegroundWindow(hwnd) != 0
+        // Attach to the foreground window's thread to bypass SetForegroundWindow restrictions
+        let foreground = GetForegroundWindow();
+        let fg_thread = GetWindowThreadProcessId(foreground, std::ptr::null_mut());
+        let target_thread = GetWindowThreadProcessId(hwnd, std::ptr::null_mut());
+        let cur_thread = GetCurrentThreadId();
+        let mut attached_fg = false;
+        let mut attached_target = false;
+        if fg_thread != cur_thread {
+            attached_fg = AttachThreadInput(cur_thread, fg_thread, TRUE) != 0;
+        }
+        if target_thread != cur_thread && target_thread != fg_thread {
+            attached_target = AttachThreadInput(cur_thread, target_thread, TRUE) != 0;
+        }
+        let result = SetForegroundWindow(hwnd) != 0;
+        BringWindowToTop(hwnd);
+        if attached_fg {
+            AttachThreadInput(cur_thread, fg_thread, FALSE);
+        }
+        if attached_target {
+            AttachThreadInput(cur_thread, target_thread, FALSE);
+        }
+        result
     }
 }
 

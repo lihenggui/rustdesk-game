@@ -1726,7 +1726,10 @@ pub mod window_capture {
         let spf = Duration::from_millis(33); // ~30 FPS
         let mut last_size_check = Instant::now();
 
-        while sp.ok() && !stop_flag.load(Ordering::Relaxed) {
+        // Note: we only check stop_flag here, NOT sp.ok(), because sp.ok() requires
+        // active subscribers. The capture service starts before any client subscribes to it,
+        // so sp.ok() would be false initially and the loop would exit immediately.
+        while !stop_flag.load(Ordering::Relaxed) {
             // Check if window is still valid
             if !crate::platform::windows::is_window_valid(hwnd) {
                 log::info!("Window {:#x} no longer valid, stopping capture", hwnd);
@@ -1747,6 +1750,12 @@ pub mod window_capture {
                     }
                     break; // Will be restarted by scanner on next cycle
                 }
+            }
+
+            // Only capture and encode if there are subscribers
+            if !sp.has_subscribes() {
+                std::thread::sleep(spf);
+                continue;
             }
 
             let now = time::Instant::now();
