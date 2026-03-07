@@ -1758,6 +1758,11 @@ pub mod window_capture {
                 continue;
             }
 
+            // Swap new_subscribes into subscribes so send_video_frame reaches them.
+            // The normal video service uses repeat()/snapshot() for this, but our
+            // custom loop must do it explicitly.
+            sp.snapshot(|_| Ok(())).ok();
+
             let now = time::Instant::now();
             let time = now - start;
             let ms = (time.as_secs() * 1000 + time.subsec_millis() as u64) as i64;
