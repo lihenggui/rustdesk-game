@@ -531,7 +531,7 @@ class _MonitorMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => showMonitorsToolbar
-      ? buildMultiMonitorMenu(context)
+      ? Obx(() => buildMultiMonitorMenu(context))
       : Obx(() => buildMonitorMenu(context));
 
   Widget buildMonitorMenu(BuildContext context) {

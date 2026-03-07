@@ -969,9 +969,9 @@ impl Connection {
             conn.try_empty_file_clipboard();
         }
 
-        // Stop window capture scanner and all captures on connection close
+        // Stop window capture scanner and all captures only if this connection owns them
         #[cfg(windows)]
-        {
+        if conn.window_capture_rx.is_some() {
             video_service::window_capture::stop_scanner();
             video_service::window_capture::stop_all_window_captures();
             conn.window_capture_rx = None;
@@ -3760,6 +3760,13 @@ impl Connection {
                         );
                         let primary_idx = *display_service::PRIMARY_DISPLAY_IDX;
                         if let Some(server) = self.server.upgrade() {
+                            // Unsubscribe from the window capture service first
+                            let old_service_name = window_capture::get_window_service_name(closed_idx);
+                            {
+                                let mut lock = server.write().unwrap();
+                                lock.subscribe(&old_service_name, self.inner.clone(), false);
+                            }
+
                             self.switch_display_to(primary_idx, server.clone());
 
                             // Send SwitchDisplay message to client

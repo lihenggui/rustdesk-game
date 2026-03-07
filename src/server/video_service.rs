@@ -1439,6 +1439,7 @@ pub mod window_capture {
         // display_idx -> (hwnd, service_name, stop_flag)
         pub static ref WINDOW_CAPTURE_SERVICES: Mutex<HashMap<usize, WindowCaptureEntry>> = Mutex::new(HashMap::new());
         static ref SCANNER_STOP: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+        static ref SCANNER_THREAD: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
     }
 
     pub struct WindowCaptureEntry {
@@ -1485,11 +1486,19 @@ pub mod window_capture {
         let sp_clone = vs.sp.clone();
         let stop = stop_flag;
 
+        let my_stop_flag = stop.clone();
         std::thread::spawn(move || {
             if let Err(e) = run_window_capture(display_idx, hwnd, sp_clone.clone(), stop) {
                 log::error!("Window capture service {} error: {:?}", display_idx, e);
             }
-            WINDOW_CAPTURE_SERVICES.lock().unwrap().remove(&display_idx);
+            // Only remove from map if our stop_flag is still the current one
+            // (prevents new entry from being removed by old thread)
+            let mut services = WINDOW_CAPTURE_SERVICES.lock().unwrap();
+            if let Some(entry) = services.get(&display_idx) {
+                if Arc::ptr_eq(&entry.stop_flag, &my_stop_flag) {
+                    services.remove(&display_idx);
+                }
+            }
         });
 
         vs.sp
@@ -1561,8 +1570,10 @@ pub mod window_capture {
         let stop_flag = Arc::new(AtomicBool::new(false));
         *SCANNER_STOP.lock().unwrap() = Some(stop_flag.clone());
 
-        std::thread::spawn(move || {
+        let handle = std::thread::spawn(move || {
             log::info!("Window capture scanner started");
+            // Track hwnd -> display_idx assignments to reuse indices on restart (e.g., after resize)
+            let mut hwnd_to_idx: HashMap<usize, usize> = HashMap::new();
             while !stop_flag.load(Ordering::Relaxed) {
                 std::thread::sleep(Duration::from_secs(2));
                 if stop_flag.load(Ordering::Relaxed) {
@@ -1589,6 +1600,7 @@ pub mod window_capture {
                             display_idx
                         );
                         stop_window_capture(display_idx);
+                        hwnd_to_idx.remove(&hwnd);
                         callback(ScannerEvent::ViewedWindowClosed(display_idx));
                         changed = true;
                     }
@@ -1611,13 +1623,19 @@ pub mod window_capture {
                 let base_idx = display_service::get_sync_displays().len() + 100;
                 for win in &current_windows {
                     if !tracked.contains_key(&win.hwnd) {
-                        // Find next available display_idx
-                        let services = WINDOW_CAPTURE_SERVICES.lock().unwrap();
-                        let mut new_idx = base_idx;
-                        while services.contains_key(&new_idx) {
-                            new_idx += 1;
-                        }
-                        drop(services);
+                        // Reuse previously assigned display_idx if available (e.g., after resize restart)
+                        let new_idx = if let Some(&prev_idx) = hwnd_to_idx.get(&win.hwnd) {
+                            prev_idx
+                        } else {
+                            let services = WINDOW_CAPTURE_SERVICES.lock().unwrap();
+                            let mut idx = base_idx;
+                            while services.contains_key(&idx) || hwnd_to_idx.values().any(|&v| v == idx) {
+                                idx += 1;
+                            }
+                            drop(services);
+                            idx
+                        };
+                        hwnd_to_idx.insert(win.hwnd, new_idx);
 
                         log::info!(
                             "Scanner: new window {:#x} '{}' detected, starting capture at display_idx={}",
@@ -1633,7 +1651,7 @@ pub mod window_capture {
                             win.height,
                         );
 
-                        // Register service with the server
+                        // Register service with the server (replaces old service if same name)
                         if let Some(server_arc) = server.upgrade() {
                             let mut lock = server_arc.write().unwrap();
                             lock.add_service(Box::new(sp));
@@ -1643,11 +1661,12 @@ pub mod window_capture {
                     }
                 }
 
-                // If anything changed, emit WindowsChanged with the full current list
+                // If anything changed, emit WindowsChanged with active entries only
                 if changed {
                     let services = WINDOW_CAPTURE_SERVICES.lock().unwrap();
                     let infos: Vec<WindowInfoData> = services
                         .iter()
+                        .filter(|(_, entry)| !entry.stop_flag.load(Ordering::Relaxed))
                         .map(|(&idx, entry)| WindowInfoData {
                             display_idx: idx,
                             hwnd: entry.hwnd,
@@ -1662,12 +1681,16 @@ pub mod window_capture {
             }
             log::info!("Window capture scanner stopped");
         });
+        *SCANNER_THREAD.lock().unwrap() = Some(handle);
     }
 
-    /// Stop the background scanner thread.
+    /// Stop the background scanner thread and wait for it to finish.
     pub fn stop_scanner() {
         if let Some(flag) = SCANNER_STOP.lock().unwrap().take() {
             flag.store(true, Ordering::Relaxed);
+        }
+        if let Some(handle) = SCANNER_THREAD.lock().unwrap().take() {
+            let _ = handle.join();
         }
     }
 
