@@ -1620,7 +1620,7 @@ pub mod window_capture {
                 }
 
                 // Check for new windows: in scan but not tracked
-                let base_idx = display_service::get_sync_displays().len() + 100;
+                let base_idx = display_service::get_sync_displays().len();
                 for win in &current_windows {
                     if !tracked.contains_key(&win.hwnd) {
                         // Reuse previously assigned display_idx if available (e.g., after resize restart)
@@ -1780,9 +1780,9 @@ pub mod window_capture {
                     match encoder.encode_to_message(EncodeInput::YUV(&yuv), ms) {
                         Ok(mut vf) => {
                             encode_fail_counter = 0;
-                            // Use display 0 so the client's existing renderer handles the frame.
-                            // The virtual display index (101+) is only for server-side routing.
-                            vf.display = 0;
+                            // Use the actual display index so the client routes
+                            // frames to the correct renderer/texture.
+                            vf.display = display_idx as _;
                             let mut msg = Message::new();
                             msg.set_video_frame(vf);
                             sp.send_video_frame(msg);

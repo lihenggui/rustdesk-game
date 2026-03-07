@@ -300,8 +300,10 @@ pub struct Connection {
     window_capture_rx: Option<mpsc::UnboundedReceiver<video_service::window_capture::ScannerEvent>>,
     /// Tracks which window capture virtual index is active (e.g. 101).
     /// When set, the connection is subscribed to a window capture service instead of a monitor.
+    /// The display index of the original monitor before switching to window capture.
+    /// Used to restore when a viewed window capture is closed.
     #[cfg(windows)]
-    window_capture_active: Option<usize>,
+    monitor_display_idx: usize,
     // The user token must be set when terminal is enabled.
     // 0 indicates SYSTEM user
     // other values indicate current user
@@ -485,7 +487,7 @@ impl Connection {
             #[cfg(windows)]
             window_capture_rx: None,
             #[cfg(windows)]
-            window_capture_active: None,
+            monitor_display_idx: 0,
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             terminal_user_token: None,
             terminal_generic_service: None,
@@ -3566,9 +3568,11 @@ impl Connection {
         {
             use video_service::window_capture;
 
+            let currently_on_wc = window_capture::is_window_capture(self.display_idx);
+
             if window_capture::is_window_capture(display_idx) {
                 // Switching to a window capture
-                if self.window_capture_active == Some(display_idx) {
+                if self.display_idx == display_idx {
                     return; // Already viewing this window
                 }
 
@@ -3581,25 +3585,27 @@ impl Connection {
                     let new_service = window_capture::get_window_service_name(display_idx);
                     let mut lock = server.write().unwrap();
 
-                    // Unsubscribe from old service
-                    let old_service = if let Some(old_wc) = self.window_capture_active {
-                        window_capture::get_window_service_name(old_wc)
+                    // Unsubscribe from old service (window capture or monitor)
+                    let old_service = if currently_on_wc {
+                        window_capture::get_window_service_name(self.display_idx)
                     } else {
                         video_service::get_service_name(self.video_source(), self.display_idx)
                     };
                     lock.subscribe(&old_service, self.inner.clone(), false);
                     lock.subscribe(&new_service, self.inner.clone(), true);
-                    self.window_capture_active = Some(display_idx);
-                    // NOTE: self.display_idx stays as the original monitor index
+                    // Remember the monitor index so we can restore when window is closed
+                    if !currently_on_wc {
+                        self.monitor_display_idx = self.display_idx;
+                    }
+                    self.display_idx = display_idx;
                     drop(lock);
                 }
 
-                // Send SwitchDisplay with the ORIGINAL display index but window dimensions.
-                // This way the client's renderer for display 0 gets reused.
+                // Send SwitchDisplay with the window capture's display index and dimensions
                 if let Some((width, height)) = window_capture::get_window_dimensions(display_idx) {
                     let mut misc = Misc::new();
                     misc.set_switch_display(SwitchDisplay {
-                        display: self.display_idx as i32,
+                        display: display_idx as i32,
                         x: 0,
                         y: 0,
                         width,
@@ -3615,10 +3621,10 @@ impl Connection {
             }
 
             // Switching to a normal monitor display
-            if let Some(old_wc) = self.window_capture_active.take() {
+            if currently_on_wc {
                 // Was viewing a window capture, unsubscribe from it
                 if let Some(server) = self.server.upgrade() {
-                    let old_service = window_capture::get_window_service_name(old_wc);
+                    let old_service = window_capture::get_window_service_name(self.display_idx);
                     let mut lock = server.write().unwrap();
                     lock.subscribe(&old_service, self.inner.clone(), false);
                     drop(lock);
@@ -3661,7 +3667,7 @@ impl Connection {
             return;
         }
 
-        let base_idx = display_service::get_sync_displays().len() + 100;
+        let base_idx = display_service::get_sync_displays().len();
         let mut window_infos = Vec::new();
         if let Some(server) = self.server.upgrade() {
             for (i, win) in qqsg_windows.iter().enumerate() {
@@ -3745,7 +3751,7 @@ impl Connection {
             window_capture::stop_all_window_captures();
 
             // Base index: after physical displays
-            let base_idx = display_service::get_sync_displays().len() + 100; // offset by 100 to avoid collision
+            let base_idx = display_service::get_sync_displays().len();
 
             let mut window_infos = Vec::new();
             if let Some(server) = self.server.upgrade() {
@@ -3839,21 +3845,21 @@ impl Connection {
                     self.send(msg).await;
                 }
                 window_capture::ScannerEvent::ViewedWindowClosed(closed_idx) => {
-                    if self.window_capture_active == Some(closed_idx) {
+                    if self.display_idx == closed_idx {
                         log::info!(
-                            "Viewed window display_idx={} was closed, switching back to monitor",
-                            closed_idx
+                            "Viewed window display_idx={} was closed, switching back to monitor {}",
+                            closed_idx, self.monitor_display_idx
                         );
-                        self.window_capture_active = None;
                         if let Some(server) = self.server.upgrade() {
                             let old_service_name = window_capture::get_window_service_name(closed_idx);
                             {
                                 let mut lock = server.write().unwrap();
                                 lock.subscribe(&old_service_name, self.inner.clone(), false);
                                 // Re-subscribe to the monitor service
-                                let monitor_service = video_service::get_service_name(self.video_source(), self.display_idx);
+                                let monitor_service = video_service::get_service_name(self.video_source(), self.monitor_display_idx);
                                 lock.subscribe(&monitor_service, self.inner.clone(), true);
                             }
+                            self.display_idx = self.monitor_display_idx;
 
                             // Send SwitchDisplay for the monitor
                             if let Some(msg_out) = video_service::make_display_changed_msg(

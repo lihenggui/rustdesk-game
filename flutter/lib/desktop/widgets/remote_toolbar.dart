@@ -644,10 +644,12 @@ class _MonitorMenu extends StatelessWidget {
           );
         });
 
-    for (int i = 0; i < pi.displays.length; i++) {
+    // Only show real monitor buttons (not window captures)
+    final numReal = pi.numRealDisplays > 0 ? pi.numRealDisplays : pi.displays.length;
+    for (int i = 0; i < numReal; i++) {
       monitorList.add(buildMonitorButton(i));
     }
-    // Add window capture virtual displays
+    // Add window capture virtual displays with SG labels
     final windowCaptures = ffi.ffiModel.pi.windowCaptures;
     var sgIndex = 1;
     for (final entry in windowCaptures.entries) {
@@ -655,16 +657,16 @@ class _MonitorMenu extends StatelessWidget {
       final label = 'SG$sgIndex';
       sgIndex++;
       monitorList.add(Obx(() {
-        final activeWc = ffi.ffiModel.pi.activeWindowCapture.value;
+        RxInt display = CurrentDisplayState.find(id);
         return _IconMenuButton(
           tooltip: isMulti ? '' : label,
           hMargin: isMulti ? null : 6,
           vMargin: isMulti ? null : 12,
           topLevel: false,
-          color: displayIdx == activeWc
+          color: displayIdx == display.value
               ? _ToolbarTheme.blueColor
               : _ToolbarTheme.inactiveColor,
-          hoverColor: displayIdx == activeWc
+          hoverColor: displayIdx == display.value
               ? _ToolbarTheme.hoverBlueColor
               : _ToolbarTheme.hoverInactiveColor,
           icon: Container(
@@ -704,7 +706,8 @@ class _MonitorMenu extends StatelessWidget {
       final startX = startY;
 
       final children = <Widget>[];
-      for (var i = 0; i < pi.displays.length; i++) {
+      final numReal = pi.numRealDisplays > 0 ? pi.numRealDisplays : pi.displays.length;
+      for (var i = 0; i < numReal; i++) {
         final d = pi.displays[i];
         double s = d.scale;
         int dWidth = d.width.toDouble() ~/ s;
@@ -765,8 +768,7 @@ class _MonitorMenu extends StatelessWidget {
       _menuDismissCallback(ffi);
     }
     RxInt display = CurrentDisplayState.find(id);
-    // Also switch if a window capture is active (even if display index matches)
-    if (display.value != i || (i < 100 && pi.activeWindowCapture.value >= 0) || (i >= 100 && pi.activeWindowCapture.value != i)) {
+    if (display.value != i) {
       final isChooseDisplayToOpenInNewWindow = i < 100 && pi.isSupportMultiDisplay &&
           bind.sessionGetDisplaysAsIndividualWindows(
                   sessionId: ffi.sessionId) ==
