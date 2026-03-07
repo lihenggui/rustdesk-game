@@ -1747,6 +1747,9 @@ impl Connection {
             if !wait_session_id_confirm {
                 self.try_sub_monitor_services();
             }
+            // Auto-start window capture for QQSG windows
+            #[cfg(windows)]
+            self.auto_start_window_capture().await;
         }
         true
     }
@@ -3628,6 +3631,66 @@ impl Connection {
             {
                 self.send(msg_out).await;
             }
+        }
+    }
+
+    #[cfg(windows)]
+    async fn auto_start_window_capture(&mut self) {
+        use video_service::window_capture;
+
+        let qqsg_windows = crate::platform::windows::find_all_qqsg_windows();
+        if qqsg_windows.is_empty() {
+            log::info!("No QQSG windows found, skipping auto-start window capture");
+            return;
+        }
+
+        let base_idx = display_service::get_sync_displays().len() + 100;
+        let mut window_infos = Vec::new();
+        if let Some(server) = self.server.upgrade() {
+            for (i, win) in qqsg_windows.iter().enumerate() {
+                let display_idx = base_idx + i;
+                let sp = window_capture::start_window_capture(
+                    display_idx,
+                    win.hwnd,
+                    win.title.clone(),
+                    win.width,
+                    win.height,
+                );
+                {
+                    let mut lock = server.write().unwrap();
+                    lock.add_service(Box::new(sp));
+                }
+                let mut wi = WindowInfo::new();
+                wi.display_idx = display_idx as i32;
+                wi.width = win.width;
+                wi.height = win.height;
+                wi.window_title = win.title.clone();
+                window_infos.push(wi);
+            }
+
+            let (tx_scanner, rx_scanner) =
+                mpsc::unbounded_channel::<window_capture::ScannerEvent>();
+            self.window_capture_rx = Some(rx_scanner);
+
+            let server_weak = self.server.clone();
+            window_capture::start_scanner(
+                server_weak,
+                Box::new(move |event| {
+                    let _ = tx_scanner.send(event);
+                }),
+            );
+        }
+
+        if !window_infos.is_empty() {
+            let mut resp = WindowCaptureResponse::new();
+            resp.success = true;
+            resp.windows = window_infos.into();
+            let mut misc = Misc::new();
+            misc.set_window_capture_response(resp);
+            let mut msg = Message::new();
+            msg.set_misc(misc);
+            self.send(msg).await;
+            log::info!("Auto-started window capture for QQSG windows");
         }
     }
 

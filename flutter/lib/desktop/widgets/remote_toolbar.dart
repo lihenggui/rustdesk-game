@@ -649,13 +649,15 @@ class _MonitorMenu extends StatelessWidget {
     }
     // Add window capture virtual displays
     final windowCaptures = ffi.ffiModel.pi.windowCaptures;
+    var sgIndex = 1;
     for (final entry in windowCaptures.entries) {
       final displayIdx = entry.key;
-      final title = entry.value['title'] as String? ?? 'Window';
+      final label = 'SG$sgIndex';
+      sgIndex++;
       monitorList.add(Obx(() {
         RxInt display = CurrentDisplayState.find(id);
         return _IconMenuButton(
-          tooltip: isMulti ? '' : '[QQSG] $title',
+          tooltip: isMulti ? '' : label,
           hMargin: isMulti ? null : 6,
           vMargin: isMulti ? null : 12,
           topLevel: false,
@@ -668,20 +670,13 @@ class _MonitorMenu extends StatelessWidget {
           icon: Container(
             alignment: AlignmentDirectional.center,
             constraints: const BoxConstraints(minHeight: _ToolbarTheme.height),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.videogame_asset, size: 16, color: Colors.white),
-                const SizedBox(width: 2),
-                Text(
-                  title.length > 8 ? '${title.substring(0, 8)}...' : title,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+            child: Text(
+              label,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
           onPressed: () => onPressed(displayIdx, pi, isMulti),

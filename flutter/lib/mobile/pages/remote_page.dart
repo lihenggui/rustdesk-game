@@ -1215,9 +1215,11 @@ void showOptions(
                           fontWeight: FontWeight.bold))))));
     }
     // Add window capture buttons
+    var sgIndex = 1;
     for (final entry in pi.windowCaptures.entries) {
       final displayIdx = entry.key;
-      final title = entry.value['title'] as String? ?? 'Window';
+      final label = 'SG$sgIndex';
+      sgIndex++;
       children.add(InkWell(
         onTap: () {
           if (displayIdx == cur) return;
@@ -1234,7 +1236,7 @@ void showOptions(
           ),
           child: Center(
             child: Text(
-              title.length > 6 ? '${title.substring(0, 6)}..' : title,
+              label,
               style: TextStyle(
                 color: displayIdx == cur ? numColorSelected : numColorUnselected,
                 fontSize: 11,
