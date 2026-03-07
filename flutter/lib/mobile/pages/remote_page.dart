@@ -1193,7 +1193,9 @@ void showOptions(
     // - dark theme: 0xff212121 (the canvas color?)
     final numBgSelected =
         Theme.of(context).colorScheme.primary.withOpacity(0.6);
-    for (var i = 0; i < pi.displays.length; ++i) {
+    // Only show real monitor buttons (not window captures)
+    final numReal = pi.numRealDisplays > 0 ? pi.numRealDisplays : pi.displays.length;
+    for (var i = 0; i < numReal; ++i) {
       children.add(InkWell(
           onTap: () {
             if (i == cur) return;
@@ -1214,13 +1216,16 @@ void showOptions(
                               i == cur ? numColorSelected : numColorUnselected,
                           fontWeight: FontWeight.bold))))));
     }
-    // Add window capture buttons
+    // Add window capture buttons with SG labels
+    var sgIndex = 1;
     for (final entry in pi.windowCaptures.entries) {
       final displayIdx = entry.key;
-      final title = entry.value['title'] as String? ?? 'Window';
+      final label = 'SG$sgIndex';
+      sgIndex++;
+      final isActive = displayIdx == cur;
       children.add(InkWell(
         onTap: () {
-          if (displayIdx == cur) return;
+          if (isActive) return;
           openMonitorInTheSameTab(displayIdx, gFFI, pi);
           gFFI.dialogManager.dismissAll();
         },
@@ -1230,13 +1235,13 @@ void showOptions(
           decoration: BoxDecoration(
             border: Border.all(color: Theme.of(context).hintColor),
             borderRadius: BorderRadius.circular(2),
-            color: displayIdx == cur ? numBgSelected : null,
+            color: isActive ? numBgSelected : null,
           ),
           child: Center(
             child: Text(
-              title.length > 6 ? '${title.substring(0, 6)}..' : title,
+              label,
               style: TextStyle(
-                color: displayIdx == cur ? numColorSelected : numColorUnselected,
+                color: isActive ? numColorSelected : numColorUnselected,
                 fontSize: 11,
               ),
             ),

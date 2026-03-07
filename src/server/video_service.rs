@@ -1620,7 +1620,7 @@ pub mod window_capture {
                 }
 
                 // Check for new windows: in scan but not tracked
-                let base_idx = display_service::get_sync_displays().len() + 100;
+                let base_idx = display_service::get_sync_displays().len();
                 for win in &current_windows {
                     if !tracked.contains_key(&win.hwnd) {
                         // Reuse previously assigned display_idx if available (e.g., after resize restart)
@@ -1726,7 +1726,10 @@ pub mod window_capture {
         let spf = Duration::from_millis(33); // ~30 FPS
         let mut last_size_check = Instant::now();
 
-        while sp.ok() && !stop_flag.load(Ordering::Relaxed) {
+        // Note: we only check stop_flag here, NOT sp.ok(), because sp.ok() requires
+        // active subscribers. The capture service starts before any client subscribes to it,
+        // so sp.ok() would be false initially and the loop would exit immediately.
+        while !stop_flag.load(Ordering::Relaxed) {
             // Check if window is still valid
             if !crate::platform::windows::is_window_valid(hwnd) {
                 log::info!("Window {:#x} no longer valid, stopping capture", hwnd);
@@ -1749,6 +1752,17 @@ pub mod window_capture {
                 }
             }
 
+            // Only capture and encode if there are subscribers
+            if !sp.has_subscribes() {
+                std::thread::sleep(spf);
+                continue;
+            }
+
+            // Swap new_subscribes into subscribes so send_video_frame reaches them.
+            // The normal video service uses repeat()/snapshot() for this, but our
+            // custom loop must do it explicitly.
+            sp.snapshot(|_| Ok(())).ok();
+
             let now = time::Instant::now();
             let time = now - start;
             let ms = (time.as_secs() * 1000 + time.subsec_millis() as u64) as i64;
@@ -1766,6 +1780,8 @@ pub mod window_capture {
                     match encoder.encode_to_message(EncodeInput::YUV(&yuv), ms) {
                         Ok(mut vf) => {
                             encode_fail_counter = 0;
+                            // Use the actual display index so the client routes
+                            // frames to the correct renderer/texture.
                             vf.display = display_idx as _;
                             let mut msg = Message::new();
                             msg.set_video_frame(vf);

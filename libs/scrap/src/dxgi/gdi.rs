@@ -19,7 +19,7 @@ use winapi::{
         RGBQUAD,
         SRCCOPY,
     },
-    um::winuser::{GetClientRect, GetDC, ReleaseDC},
+    um::winuser::{GetClientRect, GetDC, PrintWindow, ReleaseDC},
 };
 
 const PIXEL_WIDTH: i32 = 4;
@@ -273,19 +273,13 @@ impl CapturerWindow {
 
     pub fn frame(&self, data: &mut Vec<u8>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         unsafe {
-            let res = BitBlt(
-                self.dc,
-                0,
-                0,
-                self.width,
-                self.height,
-                self.window_dc,
-                0,
-                0,
-                SRCCOPY,
-            );
+            // Use PrintWindow with PW_RENDERFULLCONTENT to capture DirectX/OpenGL content.
+            // BitBlt cannot capture hardware-accelerated (DirectX/OpenGL) window content.
+            const PW_CLIENTONLY: u32 = 0x00000001;
+            const PW_RENDERFULLCONTENT: u32 = 0x00000002;
+            let res = PrintWindow(self.hwnd, self.dc, PW_CLIENTONLY | PW_RENDERFULLCONTENT);
             if res == 0 {
-                return Err("BitBlt failed for window capture".into());
+                return Err("PrintWindow failed for window capture".into());
             }
 
             let stride = self.width * PIXEL_WIDTH;

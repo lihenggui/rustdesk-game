@@ -298,6 +298,12 @@ pub struct Connection {
     terminal_persistent: bool,
     #[cfg(windows)]
     window_capture_rx: Option<mpsc::UnboundedReceiver<video_service::window_capture::ScannerEvent>>,
+    /// Tracks which window capture virtual index is active (e.g. 101).
+    /// When set, the connection is subscribed to a window capture service instead of a monitor.
+    /// The display index of the original monitor before switching to window capture.
+    /// Used to restore when a viewed window capture is closed.
+    #[cfg(windows)]
+    monitor_display_idx: usize,
     // The user token must be set when terminal is enabled.
     // 0 indicates SYSTEM user
     // other values indicate current user
@@ -480,6 +486,8 @@ impl Connection {
             terminal_persistent: false,
             #[cfg(windows)]
             window_capture_rx: None,
+            #[cfg(windows)]
+            monitor_display_idx: 0,
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             terminal_user_token: None,
             terminal_generic_service: None,
@@ -1747,6 +1755,9 @@ impl Connection {
             if !wait_session_id_confirm {
                 self.try_sub_monitor_services();
             }
+            // Auto-start window capture for QQSG windows
+            #[cfg(windows)]
+            self.auto_start_window_capture().await;
         }
         true
     }
@@ -3552,35 +3563,77 @@ impl Connection {
 
     async fn handle_switch_display(&mut self, s: SwitchDisplay) {
         let display_idx = s.display as usize;
-        if self.display_idx != display_idx {
-            // If switching to a window capture display, bring the window to front
-            #[cfg(windows)]
-            if let Some(hwnd) = video_service::window_capture::get_window_hwnd(display_idx) {
-                crate::platform::windows::bring_window_to_front(hwnd);
-            }
 
-            if let Some(server) = self.server.upgrade() {
-                // For window capture displays, subscribe to the window service
-                #[cfg(windows)]
-                if video_service::window_capture::is_window_capture(display_idx) {
-                    let service_name = video_service::window_capture::get_window_service_name(display_idx);
+        #[cfg(windows)]
+        {
+            use video_service::window_capture;
+
+            let currently_on_wc = window_capture::is_window_capture(self.display_idx);
+
+            if window_capture::is_window_capture(display_idx) {
+                // Switching to a window capture
+                if self.display_idx == display_idx {
+                    return; // Already viewing this window
+                }
+
+                // Bring window to front
+                if let Some(hwnd) = window_capture::get_window_hwnd(display_idx) {
+                    crate::platform::windows::bring_window_to_front(hwnd);
+                }
+
+                if let Some(server) = self.server.upgrade() {
+                    let new_service = window_capture::get_window_service_name(display_idx);
                     let mut lock = server.write().unwrap();
 
-                    // Unsubscribe from old service first
-                    let old_service_name = if video_service::window_capture::is_window_capture(self.display_idx) {
-                        video_service::window_capture::get_window_service_name(self.display_idx)
+                    // Unsubscribe from old service (window capture or monitor)
+                    let old_service = if currently_on_wc {
+                        window_capture::get_window_service_name(self.display_idx)
                     } else {
                         video_service::get_service_name(self.video_source(), self.display_idx)
                     };
-                    lock.subscribe(&old_service_name, self.inner.clone(), false);
-
-                    lock.subscribe(&service_name, self.inner.clone(), true);
+                    lock.subscribe(&old_service, self.inner.clone(), false);
+                    lock.subscribe(&new_service, self.inner.clone(), true);
+                    // Remember the monitor index so we can restore when window is closed
+                    if !currently_on_wc {
+                        self.monitor_display_idx = self.display_idx;
+                    }
                     self.display_idx = display_idx;
                     drop(lock);
-                } else {
-                    self.switch_display_to(display_idx, server.clone());
                 }
-                #[cfg(not(windows))]
+
+                // Send SwitchDisplay with the window capture's display index and dimensions
+                if let Some((width, height)) = window_capture::get_window_dimensions(display_idx) {
+                    let mut misc = Misc::new();
+                    misc.set_switch_display(SwitchDisplay {
+                        display: display_idx as i32,
+                        x: 0,
+                        y: 0,
+                        width,
+                        height,
+                        cursor_embedded: false,
+                        ..Default::default()
+                    });
+                    let mut msg_out = Message::new();
+                    msg_out.set_misc(misc);
+                    self.send(msg_out).await;
+                }
+                return;
+            }
+
+            // Switching to a normal monitor display
+            if currently_on_wc {
+                // Was viewing a window capture, unsubscribe from it
+                if let Some(server) = self.server.upgrade() {
+                    let old_service = window_capture::get_window_service_name(self.display_idx);
+                    let mut lock = server.write().unwrap();
+                    lock.subscribe(&old_service, self.inner.clone(), false);
+                    drop(lock);
+                }
+            }
+        }
+
+        if self.display_idx != display_idx {
+            if let Some(server) = self.server.upgrade() {
                 self.switch_display_to(display_idx, server.clone());
 
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -3596,38 +3649,71 @@ impl Connection {
                 }
             }
 
-            // Send display changed message.
-            #[cfg(windows)]
-            {
-                if video_service::window_capture::is_window_capture(self.display_idx) {
-                    // For window captures, construct SwitchDisplay from window dimensions
-                    if let Some((width, height)) = video_service::window_capture::get_window_dimensions(self.display_idx) {
-                        let mut misc = Misc::new();
-                        misc.set_switch_display(SwitchDisplay {
-                            display: self.display_idx as i32,
-                            x: 0,
-                            y: 0,
-                            width,
-                            height,
-                            cursor_embedded: false,
-                            ..Default::default()
-                        });
-                        let mut msg_out = Message::new();
-                        msg_out.set_misc(misc);
-                        self.send(msg_out).await;
-                    }
-                } else if let Some(msg_out) =
-                    video_service::make_display_changed_msg(self.display_idx, None, self.video_source())
-                {
-                    self.send(msg_out).await;
-                }
-            }
-            #[cfg(not(windows))]
             if let Some(msg_out) =
                 video_service::make_display_changed_msg(self.display_idx, None, self.video_source())
             {
                 self.send(msg_out).await;
             }
+        }
+    }
+
+    #[cfg(windows)]
+    async fn auto_start_window_capture(&mut self) {
+        use video_service::window_capture;
+
+        let qqsg_windows = crate::platform::windows::find_all_qqsg_windows();
+        if qqsg_windows.is_empty() {
+            log::info!("No QQSG windows found, skipping auto-start window capture");
+            return;
+        }
+
+        let base_idx = display_service::get_sync_displays().len();
+        let mut window_infos = Vec::new();
+        if let Some(server) = self.server.upgrade() {
+            for (i, win) in qqsg_windows.iter().enumerate() {
+                let display_idx = base_idx + i;
+                let sp = window_capture::start_window_capture(
+                    display_idx,
+                    win.hwnd,
+                    win.title.clone(),
+                    win.width,
+                    win.height,
+                );
+                {
+                    let mut lock = server.write().unwrap();
+                    lock.add_service(Box::new(sp));
+                }
+                let mut wi = WindowInfo::new();
+                wi.display_idx = display_idx as i32;
+                wi.width = win.width;
+                wi.height = win.height;
+                wi.window_title = win.title.clone();
+                window_infos.push(wi);
+            }
+
+            let (tx_scanner, rx_scanner) =
+                mpsc::unbounded_channel::<window_capture::ScannerEvent>();
+            self.window_capture_rx = Some(rx_scanner);
+
+            let server_weak = self.server.clone();
+            window_capture::start_scanner(
+                server_weak,
+                Box::new(move |event| {
+                    let _ = tx_scanner.send(event);
+                }),
+            );
+        }
+
+        if !window_infos.is_empty() {
+            let mut resp = WindowCaptureResponse::new();
+            resp.success = true;
+            resp.windows = window_infos.into();
+            let mut misc = Misc::new();
+            misc.set_window_capture_response(resp);
+            let mut msg = Message::new();
+            msg.set_misc(misc);
+            self.send(msg).await;
+            log::info!("Auto-started window capture for QQSG windows");
         }
     }
 
@@ -3665,7 +3751,7 @@ impl Connection {
             window_capture::stop_all_window_captures();
 
             // Base index: after physical displays
-            let base_idx = display_service::get_sync_displays().len() + 100; // offset by 100 to avoid collision
+            let base_idx = display_service::get_sync_displays().len();
 
             let mut window_infos = Vec::new();
             if let Some(server) = self.server.upgrade() {
@@ -3760,25 +3846,24 @@ impl Connection {
                 }
                 window_capture::ScannerEvent::ViewedWindowClosed(closed_idx) => {
                     if self.display_idx == closed_idx {
-                        // Switch back to primary display
                         log::info!(
-                            "Viewed window display_idx={} was closed, switching to primary display",
-                            closed_idx
+                            "Viewed window display_idx={} was closed, switching back to monitor {}",
+                            closed_idx, self.monitor_display_idx
                         );
-                        let primary_idx = *display_service::PRIMARY_DISPLAY_IDX;
                         if let Some(server) = self.server.upgrade() {
-                            // Unsubscribe from the window capture service first
                             let old_service_name = window_capture::get_window_service_name(closed_idx);
                             {
                                 let mut lock = server.write().unwrap();
                                 lock.subscribe(&old_service_name, self.inner.clone(), false);
+                                // Re-subscribe to the monitor service
+                                let monitor_service = video_service::get_service_name(self.video_source(), self.monitor_display_idx);
+                                lock.subscribe(&monitor_service, self.inner.clone(), true);
                             }
+                            self.display_idx = self.monitor_display_idx;
 
-                            self.switch_display_to(primary_idx, server.clone());
-
-                            // Send SwitchDisplay message to client
+                            // Send SwitchDisplay for the monitor
                             if let Some(msg_out) = video_service::make_display_changed_msg(
-                                primary_idx,
+                                self.display_idx,
                                 None,
                                 self.video_source(),
                             ) {
