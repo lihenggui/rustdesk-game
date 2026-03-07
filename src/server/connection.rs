@@ -3722,13 +3722,20 @@ impl Connection {
     async fn handle_window_capture_scanner_events(&mut self) {
         use video_service::window_capture;
 
-        let rx = match self.window_capture_rx.as_mut() {
-            Some(rx) => rx,
+        // Collect all pending events first, then drop the borrow on self.window_capture_rx
+        let events: Vec<_> = match self.window_capture_rx.as_mut() {
+            Some(rx) => {
+                let mut evts = Vec::new();
+                while let Ok(event) = rx.try_recv() {
+                    evts.push(event);
+                }
+                evts
+            }
             None => return,
         };
 
-        // Drain all pending events
-        while let Ok(event) = rx.try_recv() {
+        // Now process collected events without holding a borrow on self.window_capture_rx
+        for event in events {
             match event {
                 window_capture::ScannerEvent::WindowsChanged(infos) => {
                     let mut resp = WindowCaptureResponse::new();
