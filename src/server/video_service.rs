@@ -1694,6 +1694,57 @@ pub mod window_capture {
         }
     }
 
+    fn get_window_encoder_config(width: usize, height: usize, quality: f32) -> EncoderCfg {
+        let negotiated_codec = Encoder::negotiated_codec();
+        let keyframe_interval = None;
+        match negotiated_codec {
+            CodecFormat::H264 | CodecFormat::H265 => {
+                #[cfg(feature = "hwcodec")]
+                if let Some(hw) = HwRamEncoder::try_get(negotiated_codec) {
+                    return EncoderCfg::HWRAM(HwRamEncoderConfig {
+                        name: hw.name,
+                        mc_name: hw.mc_name,
+                        width,
+                        height,
+                        quality,
+                        keyframe_interval,
+                    });
+                }
+                EncoderCfg::VPX(VpxEncoderConfig {
+                    width: width as _,
+                    height: height as _,
+                    quality,
+                    codec: VpxVideoCodecId::VP9,
+                    keyframe_interval,
+                })
+            }
+            format @ (CodecFormat::VP8 | CodecFormat::VP9) => EncoderCfg::VPX(VpxEncoderConfig {
+                width: width as _,
+                height: height as _,
+                quality,
+                codec: if format == CodecFormat::VP8 {
+                    VpxVideoCodecId::VP8
+                } else {
+                    VpxVideoCodecId::VP9
+                },
+                keyframe_interval,
+            }),
+            CodecFormat::AV1 => EncoderCfg::AOM(AomEncoderConfig {
+                width: width as _,
+                height: height as _,
+                quality,
+                keyframe_interval,
+            }),
+            _ => EncoderCfg::VPX(VpxEncoderConfig {
+                width: width as _,
+                height: height as _,
+                quality,
+                codec: VpxVideoCodecId::VP9,
+                keyframe_interval,
+            }),
+        }
+    }
+
     fn run_window_capture(
         display_idx: usize,
         hwnd: usize,
@@ -1707,15 +1758,10 @@ pub mod window_capture {
         let height = capturer.height() as usize;
 
         let quality = 0.5; // medium quality
-        let encoder_cfg = EncoderCfg::VPX(VpxEncoderConfig {
-            width: width as _,
-            height: height as _,
-            quality,
-            codec: VpxVideoCodecId::VP9,
-            keyframe_interval: None,
-        });
+        let encoder_cfg = get_window_encoder_config(width, height, quality);
         let use_i444 = Encoder::use_i444(&encoder_cfg);
         let mut encoder = Encoder::new(encoder_cfg, use_i444)?;
+        let mut codec_format = Encoder::negotiated_codec();
 
         let mut yuv = Vec::new();
         let mut mid_data = Vec::new();
@@ -1765,17 +1811,16 @@ pub mod window_capture {
             sp.snapshot(|_| Ok(())).ok();
 
             // Recreate encoder when subscribers (re-)appear so the first frame
-            // is a keyframe. Without this, returning subscribers receive P-frames
-            // that their decoder can't decode (missing reference frames).
-            if !had_subscribers {
-                log::info!("Window capture display_idx={}: subscriber appeared, resetting encoder", display_idx);
-                let encoder_cfg = EncoderCfg::VPX(VpxEncoderConfig {
-                    width: width as _,
-                    height: height as _,
-                    quality,
-                    codec: VpxVideoCodecId::VP9,
-                    keyframe_interval: None,
-                });
+            // is a keyframe, or when the session codec changes mid-session.
+            let current_codec = Encoder::negotiated_codec();
+            if !had_subscribers || current_codec != codec_format {
+                if !had_subscribers {
+                    log::info!("Window capture display_idx={}: subscriber appeared, resetting encoder", display_idx);
+                } else {
+                    log::info!("Window capture display_idx={}: codec changed {:?} -> {:?}", display_idx, codec_format, current_codec);
+                }
+                codec_format = current_codec;
+                let encoder_cfg = get_window_encoder_config(width, height, quality);
                 let use_i444 = Encoder::use_i444(&encoder_cfg);
                 encoder = Encoder::new(encoder_cfg, use_i444)?;
                 had_subscribers = true;
