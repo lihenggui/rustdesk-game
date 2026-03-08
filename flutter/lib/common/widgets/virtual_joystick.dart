@@ -51,16 +51,19 @@ class _VirtualJoystickState extends State<GameJoystick> {
   static const double _cx = _kBaseRadius + _kPad;
   static const double _cy = _kBaseRadius + _kPad;
 
-  void _sendKey(String name, bool down) {
-    bind.sessionInputKey(
+  // USB HID usage codes for arrow keys
+  static const int _hidUp = 0x52;
+  static const int _hidDown = 0x51;
+  static const int _hidLeft = 0x50;
+  static const int _hidRight = 0x4F;
+
+  void _sendHid(int hid, bool down) {
+    bind.sessionHandleFlutterKeyEvent(
       sessionId: widget.ffi.sessionId,
-      name: name,
-      down: down,
-      press: false,
-      alt: false,
-      ctrl: false,
-      shift: false,
-      command: false,
+      character: '',
+      usbHid: hid,
+      lockModes: 0,
+      downOrUp: down,
     );
   }
 
@@ -73,38 +76,38 @@ class _VirtualJoystickState extends State<GameJoystick> {
     final newRight = offset.dx > dead;
 
     if (newUp != _upPressed) {
-      _sendKey('VK_UP', newUp);
+      _sendHid(_hidUp, newUp);
       _upPressed = newUp;
     }
     if (newDown != _downPressed) {
-      _sendKey('VK_DOWN', newDown);
+      _sendHid(_hidDown, newDown);
       _downPressed = newDown;
     }
     if (newLeft != _leftPressed) {
-      _sendKey('VK_LEFT', newLeft);
+      _sendHid(_hidLeft, newLeft);
       _leftPressed = newLeft;
     }
     if (newRight != _rightPressed) {
-      _sendKey('VK_RIGHT', newRight);
+      _sendHid(_hidRight, newRight);
       _rightPressed = newRight;
     }
   }
 
   void _releaseAll() {
     if (_upPressed) {
-      _sendKey('VK_UP', false);
+      _sendHid(_hidUp, false);
       _upPressed = false;
     }
     if (_downPressed) {
-      _sendKey('VK_DOWN', false);
+      _sendHid(_hidDown, false);
       _downPressed = false;
     }
     if (_leftPressed) {
-      _sendKey('VK_LEFT', false);
+      _sendHid(_hidLeft, false);
       _leftPressed = false;
     }
     if (_rightPressed) {
-      _sendKey('VK_RIGHT', false);
+      _sendHid(_hidRight, false);
       _rightPressed = false;
     }
     if (mounted) setState(() => _stick = Offset.zero);
