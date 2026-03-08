@@ -1757,7 +1757,7 @@ pub mod window_capture {
         let width = capturer.width() as usize;
         let height = capturer.height() as usize;
 
-        let quality = 0.5; // medium quality
+        let mut quality = VIDEO_QOS.lock().unwrap().ratio();
         let encoder_cfg = get_window_encoder_config(width, height, quality);
         let use_i444 = Encoder::use_i444(&encoder_cfg);
         let mut encoder = Encoder::new(encoder_cfg, use_i444)?;
@@ -1768,7 +1768,7 @@ pub mod window_capture {
         let mut pixel_data = Vec::new();
         let mut encode_fail_counter = 0usize;
         let start = time::Instant::now();
-        let spf = Duration::from_millis(33); // ~30 FPS
+        let mut spf = VIDEO_QOS.lock().unwrap().spf();
         let mut last_size_check = Instant::now();
         let mut had_subscribers = false;
 
@@ -1809,6 +1809,20 @@ pub mod window_capture {
             // The normal video service uses repeat()/snapshot() for this, but our
             // custom loop must do it explicitly.
             sp.snapshot(|_| Ok(())).ok();
+
+            // Track quality/FPS changes from QoS
+            {
+                let mut video_qos = VIDEO_QOS.lock().unwrap();
+                spf = video_qos.spf();
+                let new_quality = video_qos.ratio();
+                drop(video_qos);
+                if new_quality != quality {
+                    quality = new_quality;
+                    if encoder.support_changing_quality() {
+                        allow_err!(encoder.set_quality(quality));
+                    }
+                }
+            }
 
             // Recreate encoder when subscribers (re-)appear so the first frame
             // is a keyframe, or when the session codec changes mid-session.
