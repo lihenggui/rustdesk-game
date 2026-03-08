@@ -1,6 +1,6 @@
 use std::mem::size_of;
 use winapi::{
-    shared::windef::{HBITMAP, HDC, HWND, RECT},
+    shared::windef::{HBITMAP, HDC, HWND, POINT, RECT},
     um::wingdi::{
         BitBlt,
         CreateCompatibleBitmap,
@@ -19,7 +19,7 @@ use winapi::{
         RGBQUAD,
         SRCCOPY,
     },
-    um::winuser::{GetClientRect, GetDC, PrintWindow, ReleaseDC},
+    um::winuser::{ClientToScreen, GetClientRect, GetDC, ReleaseDC},
 };
 
 const PIXEL_WIDTH: i32 = 4;
@@ -180,7 +180,7 @@ impl Drop for CapturerGDI {
 
 pub struct CapturerWindow {
     hwnd: HWND,
-    window_dc: HDC,
+    screen_dc: HDC,
     dc: HDC,
     bmp: HBITMAP,
     width: i32,
@@ -205,21 +205,22 @@ impl CapturerWindow {
                 return Err("Window has zero size".into());
             }
 
-            let window_dc = GetDC(hwnd);
-            if window_dc.is_null() {
-                return Err("GetDC failed".into());
+            // Use screen DC for fast capture of composited content (incl. DirectX/OpenGL)
+            let screen_dc = GetDC(std::ptr::null_mut());
+            if screen_dc.is_null() {
+                return Err("GetDC(NULL) failed".into());
             }
 
-            let dc = CreateCompatibleDC(window_dc);
+            let dc = CreateCompatibleDC(screen_dc);
             if dc.is_null() {
-                ReleaseDC(hwnd, window_dc);
+                ReleaseDC(std::ptr::null_mut(), screen_dc);
                 return Err("CreateCompatibleDC failed".into());
             }
 
-            let bmp = CreateCompatibleBitmap(window_dc, width, height);
+            let bmp = CreateCompatibleBitmap(screen_dc, width, height);
             if bmp.is_null() {
                 DeleteDC(dc);
-                ReleaseDC(hwnd, window_dc);
+                ReleaseDC(std::ptr::null_mut(), screen_dc);
                 return Err("CreateCompatibleBitmap failed".into());
             }
 
@@ -227,13 +228,13 @@ impl CapturerWindow {
             if res.is_null() || res == HGDI_ERROR {
                 DeleteObject(bmp as _);
                 DeleteDC(dc);
-                ReleaseDC(hwnd, window_dc);
+                ReleaseDC(std::ptr::null_mut(), screen_dc);
                 return Err("SelectObject failed".into());
             }
 
             Ok(Self {
                 hwnd,
-                window_dc,
+                screen_dc,
                 dc,
                 bmp,
                 width,
@@ -273,13 +274,27 @@ impl CapturerWindow {
 
     pub fn frame(&self, data: &mut Vec<u8>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         unsafe {
-            // Use PrintWindow with PW_RENDERFULLCONTENT to capture DirectX/OpenGL content.
-            // BitBlt cannot capture hardware-accelerated (DirectX/OpenGL) window content.
-            const PW_CLIENTONLY: u32 = 0x00000001;
-            const PW_RENDERFULLCONTENT: u32 = 0x00000002;
-            let res = PrintWindow(self.hwnd, self.dc, PW_CLIENTONLY | PW_RENDERFULLCONTENT);
+            // Get the client area's position in screen coordinates
+            let mut pt = POINT { x: 0, y: 0 };
+            if ClientToScreen(self.hwnd, &mut pt) == 0 {
+                return Err("ClientToScreen failed".into());
+            }
+            // BitBlt from screen DC at the window's screen position.
+            // DWM composes DirectX/OpenGL content onto the screen, so this
+            // captures game content as long as the window is in the foreground.
+            let res = BitBlt(
+                self.dc,
+                0,
+                0,
+                self.width,
+                self.height,
+                self.screen_dc,
+                pt.x,
+                pt.y,
+                SRCCOPY,
+            );
             if res == 0 {
-                return Err("PrintWindow failed for window capture".into());
+                return Err("BitBlt failed for window capture".into());
             }
 
             let stride = self.width * PIXEL_WIDTH;
@@ -350,7 +365,7 @@ impl Drop for CapturerWindow {
         unsafe {
             DeleteDC(self.dc);
             DeleteObject(self.bmp as _);
-            ReleaseDC(self.hwnd, self.window_dc);
+            ReleaseDC(std::ptr::null_mut(), self.screen_dc);
         }
     }
 }

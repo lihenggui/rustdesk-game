@@ -1721,10 +1721,10 @@ pub mod window_capture {
         let mut mid_data = Vec::new();
         let mut pixel_data = Vec::new();
         let mut encode_fail_counter = 0usize;
-        let mut first_frame = true;
         let start = time::Instant::now();
         let spf = Duration::from_millis(33); // ~30 FPS
         let mut last_size_check = Instant::now();
+        let mut had_subscribers = false;
 
         // Note: we only check stop_flag here, NOT sp.ok(), because sp.ok() requires
         // active subscribers. The capture service starts before any client subscribes to it,
@@ -1754,6 +1754,7 @@ pub mod window_capture {
 
             // Only capture and encode if there are subscribers
             if !sp.has_subscribes() {
+                had_subscribers = false;
                 std::thread::sleep(spf);
                 continue;
             }
@@ -1762,6 +1763,23 @@ pub mod window_capture {
             // The normal video service uses repeat()/snapshot() for this, but our
             // custom loop must do it explicitly.
             sp.snapshot(|_| Ok(())).ok();
+
+            // Recreate encoder when subscribers (re-)appear so the first frame
+            // is a keyframe. Without this, returning subscribers receive P-frames
+            // that their decoder can't decode (missing reference frames).
+            if !had_subscribers {
+                log::info!("Window capture display_idx={}: subscriber appeared, resetting encoder", display_idx);
+                let encoder_cfg = EncoderCfg::VPX(VpxEncoderConfig {
+                    width: width as _,
+                    height: height as _,
+                    quality,
+                    codec: VpxVideoCodecId::VP9,
+                    keyframe_interval: None,
+                });
+                let use_i444 = Encoder::use_i444(&encoder_cfg);
+                encoder = Encoder::new(encoder_cfg, use_i444)?;
+                had_subscribers = true;
+            }
 
             let now = time::Instant::now();
             let time = now - start;
@@ -1786,7 +1804,6 @@ pub mod window_capture {
                             let mut msg = Message::new();
                             msg.set_video_frame(vf);
                             sp.send_video_frame(msg);
-                            first_frame = false;
                         }
                         Err(e) => {
                             encode_fail_counter += 1;
