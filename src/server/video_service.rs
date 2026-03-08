@@ -1694,9 +1694,11 @@ pub mod window_capture {
         }
     }
 
-    fn get_window_encoder_config(width: usize, height: usize, quality: f32) -> EncoderCfg {
+    fn get_window_encoder_config(width: usize, height: usize, quality: f32, record: bool) -> EncoderCfg {
+        #[cfg(feature = "vram")]
+        Encoder::update(scrap::codec::EncodingUpdate::Check);
         let negotiated_codec = Encoder::negotiated_codec();
-        let keyframe_interval = None;
+        let keyframe_interval = if record { Some(240) } else { None };
         match negotiated_codec {
             CodecFormat::H264 | CodecFormat::H265 => {
                 #[cfg(feature = "hwcodec")]
@@ -1757,8 +1759,17 @@ pub mod window_capture {
         let width = capturer.width() as usize;
         let height = capturer.height() as usize;
 
-        let mut quality = VIDEO_QOS.lock().unwrap().ratio();
-        let encoder_cfg = get_window_encoder_config(width, height, quality);
+        let mut video_qos = VIDEO_QOS.lock().unwrap();
+        let mut quality = video_qos.ratio();
+        let client_record = video_qos.record();
+        drop(video_qos);
+        let record_incoming = config::option2bool(
+            "allow-auto-record-incoming",
+            &Config::get_option("allow-auto-record-incoming"),
+        );
+        let record = client_record || record_incoming;
+        let encoder_cfg = get_window_encoder_config(width, height, quality, record);
+        Encoder::set_fallback(&encoder_cfg);
         let use_i444 = Encoder::use_i444(&encoder_cfg);
         let mut encoder = Encoder::new(encoder_cfg, use_i444)?;
         let mut codec_format = Encoder::negotiated_codec();
@@ -1834,7 +1845,8 @@ pub mod window_capture {
                     log::info!("Window capture display_idx={}: codec changed {:?} -> {:?}", display_idx, codec_format, current_codec);
                 }
                 codec_format = current_codec;
-                let encoder_cfg = get_window_encoder_config(width, height, quality);
+                let encoder_cfg = get_window_encoder_config(width, height, quality, record);
+                Encoder::set_fallback(&encoder_cfg);
                 let use_i444 = Encoder::use_i444(&encoder_cfg);
                 encoder = Encoder::new(encoder_cfg, use_i444)?;
                 had_subscribers = true;
@@ -1866,9 +1878,19 @@ pub mod window_capture {
                         }
                         Err(e) => {
                             encode_fail_counter += 1;
-                            if encode_fail_counter > 30 {
-                                log::error!("Too many encode failures for window capture: {:?}", e);
-                                break;
+                            if encode_fail_counter > 3 {
+                                if encoder.is_hardware() {
+                                    encoder.disable();
+                                    log::error!("Window capture: hw encode failed, resetting: {:?}", e);
+                                    let encoder_cfg = get_window_encoder_config(width, height, quality, record);
+                                    Encoder::set_fallback(&encoder_cfg);
+                                    let use_i444 = Encoder::use_i444(&encoder_cfg);
+                                    encoder = Encoder::new(encoder_cfg, use_i444)?;
+                                    encode_fail_counter = 0;
+                                } else {
+                                    log::error!("Too many encode failures for window capture: {:?}", e);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1878,7 +1900,11 @@ pub mod window_capture {
                 }
             }
 
-            std::thread::sleep(spf);
+            // Sleep only the remaining time, like the main display service
+            let elapsed = now.elapsed();
+            if elapsed < spf {
+                std::thread::sleep(spf - elapsed);
+            }
         }
 
         log::info!("Window capture stopped for display_idx={}", display_idx);

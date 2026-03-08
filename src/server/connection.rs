@@ -3610,7 +3610,7 @@ impl Connection {
                         y: 0,
                         width,
                         height,
-                        cursor_embedded: false,
+                        cursor_embedded: display_service::capture_cursor_embedded(),
                         ..Default::default()
                     });
                     let mut msg_out = Message::new();
