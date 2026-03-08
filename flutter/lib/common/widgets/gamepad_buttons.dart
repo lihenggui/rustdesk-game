@@ -30,45 +30,48 @@ const double _kJoystickReserved = 176.0;
 
 class _Btn {
   final String label;
-  final String key;
-  const _Btn(this.label, this.key);
+  final int hid; // USB HID usage code
+  const _Btn(this.label, this.hid);
 }
+
+// USB HID usage codes (standard HID Usage Table for Keyboard/Keypad page 0x07)
+const int _hidAltLeft = 0xE2;
 
 /// Bottom row – five main action buttons (larger).
 const List<_Btn> _kLargeRow = [
-  _Btn('Spc', 'VK_SPACE'),
-  _Btn('Tab', 'VK_TAB'),
-  _Btn('C', 'c'),
-  _Btn("'", "'"),
-  _Btn('N', 'n'),
+  _Btn('N', 0x11),
+  _Btn("'", 0x34),
+  _Btn('C', 0x06),
+  _Btn('Tab', 0x2B),
+  _Btn('Spc', 0x2C),
 ];
 
 /// Top number row – 6-0 on the main keyboard (not numpad, not Alt-affected).
 const List<_Btn> _kNumberRow = [
-  _Btn('6', '6'),
-  _Btn('7', '7'),
-  _Btn('8', '8'),
-  _Btn('9', '9'),
-  _Btn('0', '0'),
+  _Btn('6', 0x23),
+  _Btn('7', 0x24),
+  _Btn('8', 0x25),
+  _Btn('9', 0x26),
+  _Btn('0', 0x27),
 ];
 
 /// Second row – QWERTY keys (affected by Alt lock).
 const List<_Btn> _kQwertyRow = [
-  _Btn('Q', 'q'),
-  _Btn('W', 'w'),
-  _Btn('E', 'e'),
-  _Btn('R', 'r'),
-  _Btn('T', 't'),
+  _Btn('Q', 0x14),
+  _Btn('W', 0x1A),
+  _Btn('E', 0x08),
+  _Btn('R', 0x15),
+  _Btn('T', 0x17),
 ];
 
 /// Middle shortcut row – ASDFG keys (affected by Alt lock) + Enter.
 const List<_Btn> _kAsdfRow = [
-  _Btn('A', 'a'),
-  _Btn('S', 's'),
-  _Btn('D', 'd'),
-  _Btn('F', 'f'),
-  _Btn('G', 'g'),
-  _Btn('↵', 'VK_RETURN'),
+  _Btn('A', 0x04),
+  _Btn('S', 0x16),
+  _Btn('D', 0x07),
+  _Btn('F', 0x09),
+  _Btn('G', 0x0A),
+  _Btn('↵', 0x28),
 ];
 
 // ── Public widget ────────────────────────────────────────────────────────────
@@ -328,42 +331,23 @@ class _GamepadButtonState extends State<_GamepadButton> {
   /// even if the Alt lock is toggled mid-press.
   bool _altAtPress = false;
 
-  void _send(bool down, {required bool alt}) {
-    // When alt is active, explicitly press/release VK_MENU so the remote OS
-    // receives a real Alt key event rather than relying on the modifier flag.
-    if (alt && down) {
-      bind.sessionInputKey(
-        sessionId: widget.ffi.sessionId,
-        name: 'VK_MENU',
-        down: true,
-        press: false,
-        alt: false,
-        ctrl: false,
-        shift: false,
-        command: false,
-      );
-    }
-    bind.sessionInputKey(
+  void _sendHid(int hid, bool down) {
+    bind.sessionHandleFlutterKeyEvent(
       sessionId: widget.ffi.sessionId,
-      name: widget.def.key,
-      down: down,
-      press: false,
-      alt: false,
-      ctrl: false,
-      shift: false,
-      command: false,
+      character: '',
+      usbHid: hid,
+      lockModes: 0,
+      downOrUp: down,
     );
+  }
+
+  void _send(bool down, {required bool alt}) {
+    if (alt && down) {
+      _sendHid(_hidAltLeft, true);
+    }
+    _sendHid(widget.def.hid, down);
     if (alt && !down) {
-      bind.sessionInputKey(
-        sessionId: widget.ffi.sessionId,
-        name: 'VK_MENU',
-        down: false,
-        press: false,
-        alt: false,
-        ctrl: false,
-        shift: false,
-        command: false,
-      );
+      _sendHid(_hidAltLeft, false);
     }
   }
 

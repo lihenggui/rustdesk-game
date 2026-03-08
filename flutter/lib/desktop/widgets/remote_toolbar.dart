@@ -644,18 +644,22 @@ class _MonitorMenu extends StatelessWidget {
           );
         });
 
-    for (int i = 0; i < pi.displays.length; i++) {
+    // Only show real monitor buttons (not window captures)
+    final numReal = pi.numRealDisplays > 0 ? pi.numRealDisplays : pi.displays.length;
+    for (int i = 0; i < numReal; i++) {
       monitorList.add(buildMonitorButton(i));
     }
-    // Add window capture virtual displays
+    // Add window capture virtual displays with SG labels
     final windowCaptures = ffi.ffiModel.pi.windowCaptures;
+    var sgIndex = 1;
     for (final entry in windowCaptures.entries) {
       final displayIdx = entry.key;
-      final title = entry.value['title'] as String? ?? 'Window';
+      final label = 'SG$sgIndex';
+      sgIndex++;
       monitorList.add(Obx(() {
         RxInt display = CurrentDisplayState.find(id);
         return _IconMenuButton(
-          tooltip: isMulti ? '' : '[QQSG] $title',
+          tooltip: isMulti ? '' : label,
           hMargin: isMulti ? null : 6,
           vMargin: isMulti ? null : 12,
           topLevel: false,
@@ -668,20 +672,13 @@ class _MonitorMenu extends StatelessWidget {
           icon: Container(
             alignment: AlignmentDirectional.center,
             constraints: const BoxConstraints(minHeight: _ToolbarTheme.height),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.videogame_asset, size: 16, color: Colors.white),
-                const SizedBox(width: 2),
-                Text(
-                  title.length > 8 ? '${title.substring(0, 8)}...' : title,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+            child: Text(
+              label,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
           onPressed: () => onPressed(displayIdx, pi, isMulti),
@@ -709,7 +706,8 @@ class _MonitorMenu extends StatelessWidget {
       final startX = startY;
 
       final children = <Widget>[];
-      for (var i = 0; i < pi.displays.length; i++) {
+      final numReal = pi.numRealDisplays > 0 ? pi.numRealDisplays : pi.displays.length;
+      for (var i = 0; i < numReal; i++) {
         final d = pi.displays[i];
         double s = d.scale;
         int dWidth = d.width.toDouble() ~/ s;
@@ -771,7 +769,7 @@ class _MonitorMenu extends StatelessWidget {
     }
     RxInt display = CurrentDisplayState.find(id);
     if (display.value != i) {
-      final isChooseDisplayToOpenInNewWindow = pi.isSupportMultiDisplay &&
+      final isChooseDisplayToOpenInNewWindow = i < 100 && pi.isSupportMultiDisplay &&
           bind.sessionGetDisplaysAsIndividualWindows(
                   sessionId: ffi.sessionId) ==
               'Y';

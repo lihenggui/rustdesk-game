@@ -1620,7 +1620,7 @@ pub mod window_capture {
                 }
 
                 // Check for new windows: in scan but not tracked
-                let base_idx = display_service::get_sync_displays().len() + 100;
+                let base_idx = display_service::get_sync_displays().len();
                 for win in &current_windows {
                     if !tracked.contains_key(&win.hwnd) {
                         // Reuse previously assigned display_idx if available (e.g., after resize restart)
@@ -1694,6 +1694,59 @@ pub mod window_capture {
         }
     }
 
+    fn get_window_encoder_config(width: usize, height: usize, quality: f32, record: bool) -> EncoderCfg {
+        #[cfg(feature = "vram")]
+        Encoder::update(scrap::codec::EncodingUpdate::Check);
+        let negotiated_codec = Encoder::negotiated_codec();
+        let keyframe_interval = if record { Some(240) } else { None };
+        match negotiated_codec {
+            CodecFormat::H264 | CodecFormat::H265 => {
+                #[cfg(feature = "hwcodec")]
+                if let Some(hw) = HwRamEncoder::try_get(negotiated_codec) {
+                    return EncoderCfg::HWRAM(HwRamEncoderConfig {
+                        name: hw.name,
+                        mc_name: hw.mc_name,
+                        width,
+                        height,
+                        quality,
+                        keyframe_interval,
+                    });
+                }
+                EncoderCfg::VPX(VpxEncoderConfig {
+                    width: width as _,
+                    height: height as _,
+                    quality,
+                    codec: VpxVideoCodecId::VP9,
+                    keyframe_interval,
+                })
+            }
+            format @ (CodecFormat::VP8 | CodecFormat::VP9) => EncoderCfg::VPX(VpxEncoderConfig {
+                width: width as _,
+                height: height as _,
+                quality,
+                codec: if format == CodecFormat::VP8 {
+                    VpxVideoCodecId::VP8
+                } else {
+                    VpxVideoCodecId::VP9
+                },
+                keyframe_interval,
+            }),
+            CodecFormat::AV1 => EncoderCfg::AOM(AomEncoderConfig {
+                width: width as _,
+                height: height as _,
+                quality,
+                keyframe_interval,
+            }),
+            _ => EncoderCfg::VPX(VpxEncoderConfig {
+                width: width as _,
+                height: height as _,
+                quality,
+                codec: VpxVideoCodecId::VP9,
+                keyframe_interval,
+            }),
+        }
+    }
+
     fn run_window_capture(
         display_idx: usize,
         hwnd: usize,
@@ -1706,27 +1759,34 @@ pub mod window_capture {
         let width = capturer.width() as usize;
         let height = capturer.height() as usize;
 
-        let quality = 0.5; // medium quality
-        let encoder_cfg = EncoderCfg::VPX(VpxEncoderConfig {
-            width: width as _,
-            height: height as _,
-            quality,
-            codec: VpxVideoCodecId::VP9,
-            keyframe_interval: None,
-        });
+        let mut video_qos = VIDEO_QOS.lock().unwrap();
+        let mut quality = video_qos.ratio();
+        let client_record = video_qos.record();
+        drop(video_qos);
+        let record_incoming = config::option2bool(
+            "allow-auto-record-incoming",
+            &Config::get_option("allow-auto-record-incoming"),
+        );
+        let record = client_record || record_incoming;
+        let encoder_cfg = get_window_encoder_config(width, height, quality, record);
+        Encoder::set_fallback(&encoder_cfg);
         let use_i444 = Encoder::use_i444(&encoder_cfg);
         let mut encoder = Encoder::new(encoder_cfg, use_i444)?;
+        let mut codec_format = Encoder::negotiated_codec();
 
         let mut yuv = Vec::new();
         let mut mid_data = Vec::new();
         let mut pixel_data = Vec::new();
         let mut encode_fail_counter = 0usize;
-        let mut first_frame = true;
         let start = time::Instant::now();
-        let spf = Duration::from_millis(33); // ~30 FPS
+        let mut spf = VIDEO_QOS.lock().unwrap().spf();
         let mut last_size_check = Instant::now();
+        let mut had_subscribers = false;
 
-        while sp.ok() && !stop_flag.load(Ordering::Relaxed) {
+        // Note: we only check stop_flag here, NOT sp.ok(), because sp.ok() requires
+        // active subscribers. The capture service starts before any client subscribes to it,
+        // so sp.ok() would be false initially and the loop would exit immediately.
+        while !stop_flag.load(Ordering::Relaxed) {
             // Check if window is still valid
             if !crate::platform::windows::is_window_valid(hwnd) {
                 log::info!("Window {:#x} no longer valid, stopping capture", hwnd);
@@ -1749,6 +1809,49 @@ pub mod window_capture {
                 }
             }
 
+            // Only capture and encode if there are subscribers
+            if !sp.has_subscribes() {
+                had_subscribers = false;
+                std::thread::sleep(spf);
+                continue;
+            }
+
+            // Swap new_subscribes into subscribes so send_video_frame reaches them.
+            // The normal video service uses repeat()/snapshot() for this, but our
+            // custom loop must do it explicitly.
+            sp.snapshot(|_| Ok(())).ok();
+
+            // Track quality/FPS changes from QoS
+            {
+                let mut video_qos = VIDEO_QOS.lock().unwrap();
+                spf = video_qos.spf();
+                let new_quality = video_qos.ratio();
+                drop(video_qos);
+                if new_quality != quality {
+                    quality = new_quality;
+                    if encoder.support_changing_quality() {
+                        allow_err!(encoder.set_quality(quality));
+                    }
+                }
+            }
+
+            // Recreate encoder when subscribers (re-)appear so the first frame
+            // is a keyframe, or when the session codec changes mid-session.
+            let current_codec = Encoder::negotiated_codec();
+            if !had_subscribers || current_codec != codec_format {
+                if !had_subscribers {
+                    log::info!("Window capture display_idx={}: subscriber appeared, resetting encoder", display_idx);
+                } else {
+                    log::info!("Window capture display_idx={}: codec changed {:?} -> {:?}", display_idx, codec_format, current_codec);
+                }
+                codec_format = current_codec;
+                let encoder_cfg = get_window_encoder_config(width, height, quality, record);
+                Encoder::set_fallback(&encoder_cfg);
+                let use_i444 = Encoder::use_i444(&encoder_cfg);
+                encoder = Encoder::new(encoder_cfg, use_i444)?;
+                had_subscribers = true;
+            }
+
             let now = time::Instant::now();
             let time = now - start;
             let ms = (time.as_secs() * 1000 + time.subsec_millis() as u64) as i64;
@@ -1766,17 +1869,28 @@ pub mod window_capture {
                     match encoder.encode_to_message(EncodeInput::YUV(&yuv), ms) {
                         Ok(mut vf) => {
                             encode_fail_counter = 0;
+                            // Use the actual display index so the client routes
+                            // frames to the correct renderer/texture.
                             vf.display = display_idx as _;
                             let mut msg = Message::new();
                             msg.set_video_frame(vf);
                             sp.send_video_frame(msg);
-                            first_frame = false;
                         }
                         Err(e) => {
                             encode_fail_counter += 1;
-                            if encode_fail_counter > 30 {
-                                log::error!("Too many encode failures for window capture: {:?}", e);
-                                break;
+                            if encode_fail_counter > 3 {
+                                if encoder.is_hardware() {
+                                    encoder.disable();
+                                    log::error!("Window capture: hw encode failed, resetting: {:?}", e);
+                                    let encoder_cfg = get_window_encoder_config(width, height, quality, record);
+                                    Encoder::set_fallback(&encoder_cfg);
+                                    let use_i444 = Encoder::use_i444(&encoder_cfg);
+                                    encoder = Encoder::new(encoder_cfg, use_i444)?;
+                                    encode_fail_counter = 0;
+                                } else {
+                                    log::error!("Too many encode failures for window capture: {:?}", e);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1786,7 +1900,11 @@ pub mod window_capture {
                 }
             }
 
-            std::thread::sleep(spf);
+            // Sleep only the remaining time, like the main display service
+            let elapsed = now.elapsed();
+            if elapsed < spf {
+                std::thread::sleep(spf - elapsed);
+            }
         }
 
         log::info!("Window capture stopped for display_idx={}", display_idx);

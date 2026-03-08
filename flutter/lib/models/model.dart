@@ -845,11 +845,15 @@ class FfiModel with ChangeNotifier {
             evt['original_height'] ?? kInvalidResolutionValue.toString()) ??
         kInvalidResolutionValue;
     newDisplay._scale = _pi.scaleOfDisplay(display);
-    // Extend displays list if needed for window capture virtual indices
-    while (_pi.displays.length <= display) {
-      _pi.displays.add(Display());
+    if (display >= 0 && display < _pi.displays.length) {
+      _pi.displays[display] = newDisplay;
+    } else if (display >= 0 && _pi.windowCaptures.containsKey(display)) {
+      // Window capture display — extend displays list to fit
+      while (_pi.displays.length <= display) {
+        _pi.displays.add(Display());
+      }
+      _pi.displays[display] = newDisplay;
     }
-    _pi.displays[display] = newDisplay;
 
     if (!_pi.isSupportMultiUiSession || _pi.currentDisplay == display) {
       updateCurDisplay(sessionId);
@@ -1073,6 +1077,12 @@ class FfiModel with ChangeNotifier {
       SessionID sessionId, String data, OverlayDialogManager dialogManager) {
     if (data.isEmpty) {
       _pi.windowCaptures.clear();
+      // Remove window capture entries from displays list
+      if (_pi.displays.length > _pi.numRealDisplays) {
+        _pi.displays.value =
+            _pi.displays.sublist(0, _pi.numRealDisplays);
+      }
+      notifyListeners();
       return;
     }
     final windows = <int, Map<String, dynamic>>{};
@@ -1089,6 +1099,30 @@ class FfiModel with ChangeNotifier {
       }
     }
     _pi.windowCaptures.value = windows;
+
+    // Rebuild displays list: real monitors + window captures
+    final newDisplays =
+        List<Display>.from(_pi.displays.sublist(0, _pi.numRealDisplays));
+    // Sort window capture entries by index to keep order stable
+    final sortedEntries = windows.entries.toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+    for (final entry in sortedEntries) {
+      final wc = entry.value;
+      final d = Display();
+      d.width = wc['width'] ?? 0;
+      d.height = wc['height'] ?? 0;
+      // Ensure the display is at the correct index
+      while (newDisplays.length < entry.key) {
+        newDisplays.add(Display());
+      }
+      if (newDisplays.length == entry.key) {
+        newDisplays.add(d);
+      } else {
+        newDisplays[entry.key] = d;
+      }
+    }
+    _pi.displays.value = newDisplays;
+    _pi.displaysCount.value = _pi.displays.length;
     notifyListeners();
   }
 
@@ -1393,6 +1427,7 @@ class FfiModel with ChangeNotifier {
         newDisplays.add(evtToDisplay(displays[i]));
       }
       _pi.displays.value = newDisplays;
+      _pi.numRealDisplays = newDisplays.length;
       _pi.displaysCount.value = _pi.displays.length;
       if (_pi.currentDisplay < _pi.displays.length) {
         // now replaced to _updateCurDisplay
@@ -4043,6 +4078,8 @@ class PeerInfo with ChangeNotifier {
 
   /// Window capture virtual displays: display_idx -> {title, width, height}
   RxMap<int, Map<String, dynamic>> windowCaptures = <int, Map<String, dynamic>>{}.obs;
+  /// Number of real monitors (excludes window captures added to displays list).
+  int numRealDisplays = 0;
 
   bool get isWayland => platformAdditions[kPlatformAdditionsIsWayland] == true;
   bool get isHeadless => platformAdditions[kPlatformAdditionsHeadless] == true;
